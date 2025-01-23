@@ -30,18 +30,17 @@ args = parser.parse_args()
 
 
 torch.manual_seed(args.seed)
-if args.use_cuda and torch.cuda.is_available():
+print("\n\n << CUDA devices >>")
+if args.use_cuda is True and torch.cuda.is_available():
     torch.cuda.manual_seed(args.seed)
     if args.cuda_devices:
         os.environ['CUDA_VISIBLE_DEVICES'] = args.cuda_devices
-    print("\n\n << CUDA devices >>")
-    print(f"Number of visible CUDA devices : {torch.cuda.device_count()}")
-    for device_id in range(torch.cuda.device_count()):
-        device_name = torch.cuda.get_device_name(device_id)
-        print(f"Device ID: {device_id}, Name: {device_name}")
+        #os.environ['PYTORCH_CUDA_ALLOC_CONF'] = "max_split_size_mb:512"
+    print(f"Number of visible CUDA devices: {torch.cuda.device_count()}")
+    print(f"CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES')}")
     print("\n")
 else:
-    print("CUDA is not available.")
+    print("CUDA is not available.\n")
     
 #load data
 testimage_dataset = torch.utils.data.DataLoader(
@@ -56,7 +55,7 @@ mk_dir(args.result_dir)
 ##
 model = AHDR(args)
 model.apply(weights_init_kaiming)
-if args.use_cuda:
+if args.use_cuda is True:
     model.cuda()
 
 ##
