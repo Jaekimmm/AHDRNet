@@ -6,6 +6,8 @@ from model import *
 from running_func import *
 from utils import *
 
+import os
+
 parser = argparse.ArgumentParser(description='Attention-guided HDR')
 
 parser.add_argument('--test_whole_Image', default='./test.txt')
@@ -13,6 +15,7 @@ parser.add_argument('--trained_model_dir', default='./trained-model/')
 parser.add_argument('--trained_model_filename', default='ahdr_model.pt')
 parser.add_argument('--result_dir', default='./result/')
 parser.add_argument('--use_cuda', default=True)
+parser.add_argument('--cuda_devices', type=str, default='0,1,2,3,4,5,6,7')
 parser.add_argument('--load_model', default=True)
 parser.add_argument('--lr', default=0.0001)
 parser.add_argument('--seed', default=1)
@@ -29,7 +32,17 @@ args = parser.parse_args()
 torch.manual_seed(args.seed)
 if args.use_cuda and torch.cuda.is_available():
     torch.cuda.manual_seed(args.seed)
-
+    if args.cuda_devices:
+        os.environ['CUDA_VISIBLE_DEVICES'] = args.cuda_devices
+    print("\n\n << CUDA devices >>")
+    print(f"Number of visible CUDA devices : {torch.cuda.device_count()}")
+    for device_id in range(torch.cuda.device_count()):
+        device_name = torch.cuda.get_device_name(device_id)
+        print(f"Device ID: {device_id}, Name: {device_name}")
+    print("\n")
+else:
+    print("CUDA is not available.")
+    
 #load data
 testimage_dataset = torch.utils.data.DataLoader(
     testimage_dataloader(args.test_whole_Image),

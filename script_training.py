@@ -12,6 +12,8 @@ from model import *
 from running_func import *
 from utils import *
 
+import os
+
 parser = argparse.ArgumentParser(description='Attention-guided HDR')
 
 parser.add_argument('--train-data', default='train.txt')
@@ -20,6 +22,7 @@ parser.add_argument('--trained_model_dir', default='./trained-model/')
 parser.add_argument('--trained_model_filename', default='ahdr_model.pt')
 parser.add_argument('--result_dir', default='./result/')
 parser.add_argument('--use_cuda', default=True)
+parser.add_argument('--cuda_devices', type=str, default='0,1,2,3,4,5,6,7')
 parser.add_argument('--restore', default=True)
 parser.add_argument('--load_model', default=True)
 parser.add_argument('--lr', default=0.0001)
@@ -41,6 +44,11 @@ args = parser.parse_args()
 torch.manual_seed(args.seed)
 if args.use_cuda and torch.cuda.is_available():
     torch.cuda.manual_seed(args.seed)
+    if args.cuda_devices:
+        os.environ['CUDA_VISIBLE_DEVICES'] = args.cuda_devices
+    print(f"Using devices : {torch.cuda.current_device()} -> {torch.cuda.get_device_name(torch.cuda.current_device())}")
+else:
+    print("CUDA is not available.")
 
 #load data
 train_loaders = torch.utils.data.DataLoader(

@@ -170,10 +170,11 @@ def testing_fun(model, test_loaders, args):
         data1 = torch.cat((data[:, 0:3, :], data[:, 9:12, :]), dim=1)
         data2 = torch.cat((data[:, 3:6, :], data[:, 12:15, :]), dim=1)
         data3 = torch.cat((data[:, 6:9, :], data[:, 15:18, :]), dim=1)
-        data1 = Variable(data1, volatile=True)
-        data2 = Variable(data2, volatile=True)
-        data3 = Variable(data3, volatile=True)
-        target = Variable(target, volatile=True)
+        with torch.no_grad():
+            data1 = Variable(data1)
+            data2 = Variable(data2)
+            data3 = Variable(data3)
+            target = Variable(target)
         output = model(data1, data2, data3)
 
         # save the result to .H5 files
