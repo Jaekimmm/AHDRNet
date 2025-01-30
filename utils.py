@@ -104,6 +104,19 @@ def normalized_psnr(im0, im1, norm):
         """
     return psnr(im0/norm, im1/norm)
 
+def mu_tonemap(hdr_image, mu=5000):
+    """ This function computes the mu-law tonemapped image of a given input linear HDR image.
+
+    Args:
+        hdr_image (np.ndarray): Linear HDR image with values in the range of [0-1]
+        mu (float): Parameter controlling the compression performed during tone mapping.
+
+    Returns:
+        np.ndarray (): Returns the mu-law tonemapped image.
+
+    """
+    return np.log(1 + mu * hdr_image) / np.log(1 + mu)
+
 def norm_mu_tonemap(hdr_image, norm_value, mu=5000):
     """ This function normalizes the input HDR linear image by the specified norm_value and then computes
     the mu-law tonemapped image.
@@ -118,7 +131,7 @@ def norm_mu_tonemap(hdr_image, norm_value, mu=5000):
     """
     return mu_tonemap(hdr_image/norm_value, mu)
 
-def normalized_mu_psnr(im0,im1,norm):
+def psnr_norm_mu(im0,im1,norm):
     return psnr(norm_mu_tonemap(im0,norm),norm_mu_tonemap(im1,norm))
 
 def tanh_norm_mu_tonemap(hdr_image, norm_value, mu=5000):
