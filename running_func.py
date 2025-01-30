@@ -157,25 +157,23 @@ def train(epoch, model, train_loaders, optimizer, trained_model_dir, args):
         data1 = torch.cat((data[:, 0:3, :, :], data[:, 9:12, :, :]), dim=1)
         data2 = torch.cat((data[:, 3:6, :, :], data[:, 12:15, :, :]), dim=1)
         data3 = torch.cat((data[:, 6:9, :, :], data[:, 15:18, :, :]), dim=1)
-
-        data1 = Variable(data1)
-        data2 = Variable(data2)
-        data3 = Variable(data3)
-        target = Variable(target)
         optimizer.zero_grad()
         output = model(data1, data2, data3)
 
 #########  make the loss
         output = torch.log(1 + 5000 * output.cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
-        target = torch.log(1 + 5000 * target).cpu() / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
+        target = torch.log(1 + 5000 * target.cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
 
         loss = F.l1_loss(output, target)
         loss.backward()
         optimizer.step()
         trainloss = trainloss + loss
         avg_loss = avg_loss + loss
-        if (batch_idx +1) % 4 == 0:
-            trainloss = trainloss / 4
+        
+        #if (batch_idx +1) % 4 == 0:
+        #    trainloss = trainloss / 4
+        if (batch_idx +1) % 1 == 0:
+            trainloss = trainloss / 1
             print('train Epoch {} iteration: {} loss: {:.6f}'.format(epoch, batch_idx, trainloss.data))
             fname = trained_model_dir + 'lossTXT.txt'
             try:
@@ -227,6 +225,43 @@ def testing_fun(model, test_loaders, args):
 
     return test_loss
 
+
+def validation(epoch, model, valid_loaders, trained_model_dir, args):
+    model.eval()
+    val_psnr = 0
+    val_psnr_mu = 0
+    valid_num = len(valid_loaders)
+    
+    for batch_idx, (data, target) in enumerate(valid_loaders):
+        if args.use_cuda:
+            data, target = data.cuda(), target.cuda()
+        
+        with torch.no_grad():
+            data1 = torch.cat((data[:, 0:3, :], data[:, 9:12, :]), dim=1)
+            data2 = torch.cat((data[:, 3:6, :], data[:, 12:15, :]), dim=1)
+            data3 = torch.cat((data[:, 6:9, :], data[:, 15:18, :]), dim=1)
+            output = model(data1, data2, data3)
+    
+        #########  Prepare to calculate metrics
+        psnr_output = torch.squeeze(output[0].clone())
+        psnr_target = torch.squeeze(target.clone())
+        psnr_output = psnr_output.data.cpu().numpy().astype(np.float32)
+        psnr_target = psnr_target.data.cpu().numpy().astype(np.float32)
+        
+        #########  Calculate metrics
+        psnr = normalized_psnr(psnr_output, psnr_target, psnr_target.max())
+        psnr_mu = psnr_tanh_norm_mu_tonemap(psnr_target, psnr_output)
+
+        val_psnr = val_psnr + psnr
+        val_psnr_mu = val_psnr_mu + psnr_mu
+        
+    val_psnr = val_psnr / valid_num
+    val_psnr_mu = val_psnr_mu / valid_num
+    print('Validation Epoch {}: Average PSNR: {:.4f}, PSNR_mu: {:.4f}'.format(val_psnr, val_psnr_mu))
+    
+    return val_psnr, val_psnr_mu
+
+# Not used in my code
 class testimage_dataloader(data.Dataset):
     def __init__(self, list_dir):
         f = open(list_dir)
