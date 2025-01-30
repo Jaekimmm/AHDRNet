@@ -4,25 +4,21 @@ import time
 import argparse
 import torch.optim as optim
 import torch.utils.data
-import scipy.io as scio
 from torch.nn import init
 from dataset import DatasetFromHdf5
 
 from model import *
 from running_func import *
 from utils import *
-
 import os
 
 parser = argparse.ArgumentParser(description='Attention-guided HDR')
 
-parser.add_argument('--train-data', default='train.txt')
-parser.add_argument('--test_whole_Image', default='./test.txt')
-parser.add_argument('--trained_model_dir', default='./trained-model/')
-parser.add_argument('--trained_model_filename', default='ahdr_model.pt')
-parser.add_argument('--result_dir', default='./result/')
+parser.add_argument('--model', type=str, default='AHDR',)
+parser.add_argument('--train_data', default='./data_train.txt')
+parser.add_argument('--valid_data', default='./data_valid.txt')
+parser.add_argument('--test_whole_Image', default='./data_test.txt')
 parser.add_argument('--use_cuda', default=True)
-parser.add_argument('--cuda_devices', type=str, default='0,1,2,3,4,5,6,7')
 parser.add_argument('--restore', default=True)
 parser.add_argument('--load_model', default=True)
 parser.add_argument('--lr', default=0.0001)
@@ -43,50 +39,64 @@ args = parser.parse_args()
 
 torch.manual_seed(args.seed)
 print("\n\n << CUDA devices >>")
-if args.use_cuda is True and torch.cuda.is_available():
+if args.use_cuda and torch.cuda.is_available():
     torch.cuda.manual_seed(args.seed)
-    if args.cuda_devices:
-        os.environ['CUDA_VISIBLE_DEVICES'] = args.cuda_devices
-    print(f"Number of visible CUDA devices: {torch.cuda.device_count()}")
-    print(f"CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES')}")
-    print("\n")
+    cuda_count = torch.cuda.device_count()
+    print(f"Number of visible CUDA devices: {cuda_count}")
+    print(f"CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES')}\n")
 else:
     print("CUDA is not available.\n")
 
 #load data
 train_loaders = torch.utils.data.DataLoader(
     data_loader(args.train_data),
-    batch_size=args.batchsize, shuffle=True, num_workers=4)
-
+    batch_size=args.batchsize, shuffle=True)
+valid_loaders = torch.utils.data.DataLoader(
+    data_loader(args.valid_data),
+    batch_size=1, shuffle=True)
 
 #make folders of trained model and result
-mk_dir(args.result_dir)
+trained_model_dir = f"./trained-model-{args.model}/"
+trained_model_filename = f"{args.model}_model.pt"
+mk_dir(trained_model_dir)
 
 def weights_init_kaiming(m):
     classname = m.__class__.__name__
     if classname.find('Conv2d') != -1:
-        init.kaiming_normal(m.weight.data)
+        init.kaiming_normal_(m.weight.data)
 
 
 ##
-model = AHDR(args)
-model.apply(weights_init_kaiming)
-if args.use_cuda is True:
-    model.cuda()
+if args.model in globals():
+    model = globals()[args.model]
+print(f"\nRun training with model {model}\n")
 
+model = nn.DataParallel(model(args))
+model.apply(weights_init_kaiming)
+if args.use_cuda:
+    model.cuda()
 
 optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.999), eps=1e-8)
 ##
 start_step = 0
-if args.restore and len(os.listdir(args.trained_model_dir)):
-    model, start_step = model_restore(model, args.trained_model_dir)
+
+if args.restore and len(os.listdir(trained_model_dir)):
+    model, start_step = model_restore(model, trained_model_dir)
     print('restart from {} step'.format(start_step))
+
+early_stopping = EarlyStopping(patience=7, delta=0, mode='min', verbose=True)
 
 for epoch in range(start_step + 1, args.epochs + 1):
     start = time.time()
-    train(epoch, model, train_loaders, optimizer, args)
+    avg_loss = train(epoch, model, train_loaders, optimizer, trained_model_dir, args)
     end = time.time()
-    print('epoch:{}, cost {} seconds'.format(epoch, end - start))
+    print('epoch:{}, cost {} seconds, avg_loss {}'.format(epoch, end - start, avg_loss))
     if epoch % args.save_model_interval == 0:
-        model_name = args.trained_model_dir + 'trained_model{}.pkl'.format(epoch)
+        model_name = trained_model_dir + 'trained_model{}.pkl'.format(epoch)
         torch.save(model.state_dict(), model_name)
+        
+    early_stopping(avg_loss)
+    
+    if early_stopping.early_stop:
+        print("Early Stopped")
+        break

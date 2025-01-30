@@ -12,6 +12,8 @@ import torch.utils.data as data
 import torch.nn.functional as F
 from torch.autograd import Variable
 
+import glob
+
 def mk_trained_dir_if_not(dir_path):
     if not os.path.exists(dir_path):
         os.makedirs(dir_path)
@@ -26,7 +28,8 @@ def model_restore(model, trained_model_dir):
         a.append(index)
     epoch = np.sort(a)[-1]
     model_path = trained_model_dir + 'trained_model{}.pkl'.format(epoch)
-    model.load_state_dict(torch.load(model_path))
+    #model.load_state_dict(torch.load(model_path))
+    model.load_state_dict(torch.load(model_path, map_location='cpu'))
     return model, epoch
 
 
@@ -40,7 +43,8 @@ class data_loader(data.Dataset):
 
     def __getitem__(self, index):
 
-        sample_path = self.list_txt[index][:-1]
+        sample_path = self.list_txt[index]
+        sample_path = sample_path.strip()
 
         if os.path.exists(sample_path):
 
@@ -109,7 +113,7 @@ def get_lr(epoch, lr, max_epochs):
         lr = 0.1 * lr
     return lr
 
-def train(epoch, model, train_loaders, optimizer, args):
+def train(epoch, model, train_loaders, optimizer, trained_model_dir, args):
     lr = get_lr(epoch, args.lr, args.epochs)
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
@@ -117,6 +121,7 @@ def train(epoch, model, train_loaders, optimizer, args):
     model.train()
     num = 0
     trainloss = 0
+    avg_loss = 0
     start = time.time()
     for batch_idx, (data, target) in enumerate(train_loaders):
         if args.use_cuda:
@@ -143,10 +148,11 @@ def train(epoch, model, train_loaders, optimizer, args):
         loss.backward()
         optimizer.step()
         trainloss = trainloss + loss
+        avg_loss = avg_loss + loss
         if (batch_idx +1) % 4 == 0:
             trainloss = trainloss / 4
             print('train Epoch {} iteration: {} loss: {:.6f}'.format(epoch, batch_idx, trainloss.data))
-            fname = args.trained_model_dir + 'lossTXT.txt'
+            fname = trained_model_dir + 'lossTXT.txt'
             try:
                 fobj = open(fname, 'a')
 
@@ -157,28 +163,27 @@ def train(epoch, model, train_loaders, optimizer, args):
                 fobj.close()
             trainloss = 0
 
+    avg_loss /= len(train_loaders)
+    return avg_loss
 
 def testing_fun(model, test_loaders, args):
     model.eval()
     test_loss = 0
     num = 0
+    
     for data, target in test_loaders:
         Test_Data_name = test_loaders.dataset.list_txt[num].split('.h5')[0].split('/')[-1]
         if args.use_cuda:
             data, target = data.cuda(), target.cuda()
 
-        data1 = torch.cat((data[:, 0:3, :], data[:, 9:12, :]), dim=1)
-        data2 = torch.cat((data[:, 3:6, :], data[:, 12:15, :]), dim=1)
-        data3 = torch.cat((data[:, 6:9, :], data[:, 15:18, :]), dim=1)
         with torch.no_grad():
-            data1 = Variable(data1)
-            data2 = Variable(data2)
-            data3 = Variable(data3)
-            target = Variable(target)
-        output = model(data1, data2, data3)
+            data1 = torch.cat((data[:, 0:3, :], data[:, 9:12, :]), dim=1)
+            data2 = torch.cat((data[:, 3:6, :], data[:, 12:15, :]), dim=1)
+            data3 = torch.cat((data[:, 6:9, :], data[:, 15:18, :]), dim=1)
+            output = model(data1, data2, data3)
 
         # save the result to .H5 files
-        hdrfile = h5py.File(args.result_dir + Test_Data_name + '_hdr.h5', 'w')
+        hdrfile = h5py.File('./result_' + args.model +"/" + Test_Data_name + '_hdr.h5', 'w')
         img = output[0, :, :, :]
         img = tv.utils.make_grid(img.data.cpu()).numpy()
         hdrfile.create_dataset('data', data=img)
@@ -193,7 +198,7 @@ def testing_fun(model, test_loaders, args):
         num = num + 1
 
     test_loss = test_loss / len(test_loaders.dataset)
-    print('\n Test set: Average Loss: {:.4f}'.format(test_loss.data[0]))
+    print('\n Test set: Average Loss: {:.4f}'.format(test_loss.item()))
 
     return test_loss
 

@@ -2,7 +2,7 @@ import os
 import torch
 from torch.nn import init
 from torch import nn
-
+import numpy as np
 
 def mk_dir(dir_path):
     if not os.path.exists(dir_path):
@@ -14,68 +14,62 @@ def model_load(model, trained_model_dir, model_file_name):
     model.load_state_dict(torch.load(model_path))
     return model
 
-def weights_init_normal(m):
-    classname = m.__class__.__name__
-    #print(classname)
-    if classname.find('Conv') != -1:
-        init.normal(m.weight.data, 0.0, 0.02)
-    elif classname.find('Linear') != -1:
-        init.normal(m.weight.data, 0.0, 0.02)
-    elif classname.find('BatchNorm') != -1:
-        init.normal(m.weight.data, 1.0, 0.02)
-        init.constant(m.bias.data, 0.0)
+class EarlyStopping:
+    def __init__(self, patience=3, delta=0.0, mode='min', verbose=True):
+        """
+        patience (int): loss or score가 개선된 후 기다리는 기간. default: 3
+        delta  (float): 개선시 인정되는 최소 변화 수치. default: 0.0
+        mode     (str): 개선시 최소/최대값 기준 선정('min' or 'max'). default: 'min'.
+        verbose (bool): 메시지 출력. default: True
+        """
+        self.early_stop = False
+        self.patience = patience
+        self.verbose = verbose
+        self.counter = 0
+        
+        self.best_score = np.Inf if mode == 'min' else 0
+        self.mode = mode
+        self.delta = delta
+        
 
+    def __call__(self, score):
 
-def weights_init_xavier(m):
-    classname = m.__class__.__name__
-    #print(classname)
-    if classname.find('Conv') != -1:
-        init.xavier_normal(m.weight.data, gain=1)
-    elif classname.find('Linear') != -1:
-        init.xavier_normal(m.weight.data, gain=1)
-    elif classname.find('BatchNorm') != -1:
-        init.normal(m.weight.data, 1.0, 0.02)
-        init.constant(m.bias.data, 0.0)
-
-
-def weights_init_kaiming(m):
-    classname = m.__class__.__name__
-    #print(classname)
-    if classname.find('Conv') != -1:
-        init.kaiming_normal_(m.weight.data, a=0, mode='fan_in')
-    elif classname.find('Linear') != -1:
-        init.kaiming_normal_(m.weight.data, a=0, mode='fan_in')
-    elif classname.find('BatchNorm') != -1:
-        init.normal(m.weight.data, 1.0, 0.02)
-        init.constant(m.bias.data, 0.0)
-
-
-def weights_init_orthogonal(m):
-    classname = m.__class__.__name__
-    #print(classname)
-    if classname.find('Conv') != -1:
-        init.orthogonal(m.weight.data, gain=1)
-    elif classname.find('Linear') != -1:
-        init.orthogonal(m.weight.data, gain=1)
-    elif classname.find('BatchNorm') != -1:
-        init.normal(m.weight.data, 1.0, 0.02)
-        init.constant(m.bias.data, 0.0)
-
-
-def init_weights(net, init_type='normal'):
-    #print('initialization method [%s]' % init_type)
-    if init_type == 'normal':
-        net.apply(weights_init_normal)
-    elif init_type == 'xavier':
-        net.apply(weights_init_xavier)
-    elif init_type == 'kaiming':
-        net.apply(weights_init_kaiming)
-    elif init_type == 'orthogonal':
-        net.apply(weights_init_orthogonal)
-    else:
-        raise NotImplementedError('initialization method [%s] is not implemented' % init_type)
-
-def init_model(net):
-    if isinstance(net, nn.Conv3d) or isinstance(net, nn.ConvTranspose3d):
-        nn.init.kaiming_normal_(net.weight.data, 0.25)
-        nn.init.constant_(net.bias.data, 0)
+        if self.best_score is None:
+            self.best_score = score
+            self.counter = 0
+        elif self.mode == 'min':
+            if score < (self.best_score - self.delta):
+                self.counter = 0
+                self.best_score = score
+                if self.verbose:
+                    print(f'[EarlyStopping] (Update) Best Score: {self.best_score:.5f}')
+            else:
+                self.counter += 1
+                if self.verbose:
+                    print(f'[EarlyStopping] (Patience) {self.counter}/{self.patience}, ' \
+                          f'Best: {self.best_score:.5f}' \
+                          f', Current: {score:.5f}, Delta: {np.abs(self.best_score.item() - score.item()):.5f}')
+                    
+                    
+        elif self.mode == 'max':
+            if score > (self.best_score + self.delta):
+                self.counter = 0
+                self.best_score = score
+                if self.verbose:
+                    print(f'[EarlyStopping] (Update) Best Score: {self.best_score:.5f}')
+            else:
+                self.counter += 1
+                if self.verbose:
+                    print(f'[EarlyStopping] (Patience) {self.counter}/{self.patience}, ' \
+                          f'Best: {self.best_score:.5f}' \
+                          f', Current: {score:.5f}, Delta: {np.abs(self.best_score.item() - score.item()):.5f}')
+                
+            
+        if self.counter >= self.patience:
+            if self.verbose:
+                print(f'[EarlyStop Triggered] Best Score: {self.best_score:.5f}')
+            # Early Stop
+            self.early_stop = True
+        else:
+            # Continue
+            self.early_stop = False

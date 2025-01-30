@@ -10,10 +10,8 @@ import os
 
 parser = argparse.ArgumentParser(description='Attention-guided HDR')
 
+parser.add_argument('--model', type=str, default='AHDR',)
 parser.add_argument('--test_whole_Image', default='./test.txt')
-parser.add_argument('--trained_model_dir', default='./trained-model/')
-parser.add_argument('--trained_model_filename', default='ahdr_model.pt')
-parser.add_argument('--result_dir', default='./result/')
 parser.add_argument('--use_cuda', default=True)
 parser.add_argument('--cuda_devices', type=str, default='0,1,2,3,4,5,6,7')
 parser.add_argument('--load_model', default=True)
@@ -31,14 +29,12 @@ args = parser.parse_args()
 
 torch.manual_seed(args.seed)
 print("\n\n << CUDA devices >>")
-if args.use_cuda is True and torch.cuda.is_available():
+if args.use_cuda and torch.cuda.is_available():
     torch.cuda.manual_seed(args.seed)
     if args.cuda_devices:
         os.environ['CUDA_VISIBLE_DEVICES'] = args.cuda_devices
-        #os.environ['PYTORCH_CUDA_ALLOC_CONF'] = "max_split_size_mb:512"
     print(f"Number of visible CUDA devices: {torch.cuda.device_count()}")
-    print(f"CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES')}")
-    print("\n")
+    print(f"CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES')}\n")
 else:
     print("CUDA is not available.\n")
     
@@ -47,21 +43,37 @@ testimage_dataset = torch.utils.data.DataLoader(
     testimage_dataloader(args.test_whole_Image),
     batch_size=1)
 
-
 #make folders of trained model and result
-mk_dir(args.result_dir)
+outdir = f"./result_{args.model}"
+mk_dir(outdir)
 
+def weights_init_kaiming(m):
+    classname = m.__class__.__name__
+    #print(classname)
+    if classname.find('Conv') != -1:
+        init.kaiming_normal_(m.weight.data, a=0, mode='fan_in')
+    elif classname.find('Linear') != -1:
+        init.kaiming_normal_(m.weight.data, a=0, mode='fan_in')
+    elif classname.find('BatchNorm') != -1:
+        init.normal(m.weight.data, 1.0, 0.02)
+        init.constant(m.bias.data, 0.0)
 
 ##
-model = AHDR(args)
+if args.model in globals():
+    model = globals()[args.model]
+print(f"\nRun test with model {model}\n")
+
+model = model(args)
 model.apply(weights_init_kaiming)
-if args.use_cuda is True:
+if args.use_cuda:
     model.cuda()
 
 ##
 start_step = 0
 # if args.load_model and len(os.listdir(args.trained_model_dir)):
-model = model_load(model, args.trained_model_dir, args.trained_model_filename)
+trained_model_dir = f"./trained-model-{args.model}"
+trained_model_filename = f"{args.model}_model.pt"
+model = model_load(model, trained_model_dir, trained_model_filename)
 
 # In the testing, we test on the whole image, so we defind a new variable
 #  'Image_test_loaders' used to load the whole image
