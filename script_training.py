@@ -11,6 +11,7 @@ from model import *
 from running_func import *
 from utils import *
 import os
+from torchinfo import summary
 
 parser = argparse.ArgumentParser(description='Attention-guided HDR')
 
@@ -69,13 +70,19 @@ def weights_init_kaiming(m):
 ##
 if args.model in globals():
     model = globals()[args.model]
-print(f"\nRun training with model {model}\n")
+print(f"\n[INFO] Start training with model {model}\n")
 
 model = nn.DataParallel(model(args))
 model.apply(weights_init_kaiming)
 if args.use_cuda:
     model.cuda()
 
+summary(
+    model,
+    input_size = [(1, 6, 1000, 1500), (1, 6, 1000, 1500), (1, 6, 1000, 1500)],
+    col_names=["input_size", "output_size", "kernel_size", "num_params", "mult_adds"],
+    verbose=2
+)
 optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.999), eps=1e-8)
 ##
 start_step = 0
