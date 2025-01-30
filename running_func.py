@@ -33,7 +33,7 @@ def model_restore(model, trained_model_dir):
     return model, epoch
 
 
-class data_loader(data.Dataset):
+class data_loader(data.Dataset, patch_div=1, crop_size=256, geometry_aug=True):
     def __init__(self, list_dir):
         f = open(list_dir)
         self.list_txt = f.readlines()
@@ -49,12 +49,14 @@ class data_loader(data.Dataset):
         if os.path.exists(sample_path):
 
             f = h5py.File(sample_path, 'r')
-            data = f['IN'][:]
-            label = f['GT'][:]
+            #data = f['IN'][:]
+            #label = f['GT'][:]
+            data = self.crop_for_patch(f['IN'][:], patch_div=patch_div)
+            label = self.crop_for_patch(f['GT'][:], patch_div=patch_div)
             f.close()
-            crop_size = 256
-            data, label = self.imageCrop(data, label, crop_size)
-            data, label = self.image_Geometry_Aug(data, label)
+            #crop_size = 256
+            if crom_size > 0 : data, label = self.imageCrop(data, label, crop_size)
+            if geometry_aug : data, label = self.image_Geometry_Aug(data, label)
 
 
         # print(sample_path)
@@ -105,6 +107,29 @@ class data_loader(data.Dataset):
             in_label = in_label[:, :, index]
 
         return in_data, in_label
+    
+    def crop_for_patch(self, image, patch_div=1):
+        # crop the image to be divisible by patch_div
+        if image.ndim == 2:  # 2D image (height x width)
+            height, width = image.shape
+            new_height = (height // patch_div) * patch_div
+            new_width = (width // patch_div) * patch_div
+            cropped_image = image[:new_height, :new_width]
+        elif image.ndim == 3:  # 3D image (channels x height x width)
+            channels, height, width = image.shape
+            new_height = (height // patch_div) * patch_div
+            new_width = (width // patch_div) * patch_div
+            cropped_image = image[:, :new_height, :new_width]
+        elif image.ndim == 4:  # 4D image (num x channels x height x width)
+            num, channels, height, width = image.shape
+            new_height = (height // patch_div) * patch_div
+            new_width = (width // patch_div) * patch_div
+            cropped_image = image[:, :, :new_height, :new_width]
+        else:
+            raise ValueError("Unsupported image shape")
+    
+        return cropped_image
+        
 
 def get_lr(epoch, lr, max_epochs):
     if epoch <= max_epochs * 0.8:
