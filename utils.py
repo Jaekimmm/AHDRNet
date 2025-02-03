@@ -23,6 +23,7 @@ class EarlyStopping:    # copy from freeSoul
         verbose (bool): 메시지 출력. default: True
         """
         self.early_stop = False
+        self.best_update = False
         self.patience = patience
         self.verbose = verbose
         self.counter = 0
@@ -30,7 +31,6 @@ class EarlyStopping:    # copy from freeSoul
         self.best_score = np.Inf if mode == 'min' else 0
         self.mode = mode
         self.delta = delta
-        
 
     def __call__(self, score):
 
@@ -40,11 +40,13 @@ class EarlyStopping:    # copy from freeSoul
         elif self.mode == 'min':
             if score < (self.best_score - self.delta):
                 self.counter = 0
+                self.best_update = True
                 self.best_score = score
                 if self.verbose:
                     print(f'[EarlyStopping] (Update) Best Score: {self.best_score:.5f}')
             else:
                 self.counter += 1
+                self.best_update = False
                 if self.verbose:
                     print(f'[EarlyStopping] (Patience) {self.counter}/{self.patience}, ' \
                           f'Best: {self.best_score:.5f}' \
