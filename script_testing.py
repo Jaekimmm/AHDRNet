@@ -48,9 +48,9 @@ valid_loaders = torch.utils.data.DataLoader(
 
 #make folders of trained model and result
 if args.run_name:
-    outdir = f"./result-{args.model}-{args.run_name}"
+    outdir = f"./result-{args.model}-{args.run_name}/"
 else:
-    outdir = f"./result-{args.model}"
+    outdir = f"./result-{args.model}/"
 mk_dir(outdir)
 
 def weights_init_kaiming(m):
@@ -69,7 +69,7 @@ if args.model in globals():
     model = globals()[args.model]
 print(f"\nRun test with model {model}\n")
     
-model = model(args)
+model = nn.DataParallel(model(args))
 model.apply(weights_init_kaiming)
 if args.use_cuda:
     model.cuda()
@@ -81,8 +81,8 @@ if args.run_name:
     trained_model_dir = f"./trained-model-{args.model}-{args.run_name}/"
 else:
     trained_model_dir = f"./trained-model-{args.model}/"
-trained_model_filename = f"{args.model}_model.pt"
-#trained_model_filename = f"best_trained_model_{args.model}.pkl"
+#trained_model_filename = f"{args.model}_model.pt"
+trained_model_filename = f"best_trained_model_{args.model}.pkl"
 model = model_load(model, trained_model_dir, trained_model_filename)
 
 # In the testing, we test on the whole image, so we defind a new variable
