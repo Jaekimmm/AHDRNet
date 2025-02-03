@@ -129,5 +129,6 @@ for epoch in range(start_step + 1, args.epochs + 1):
         print("[INFO] Early Stopped")
         break
 end_train = time.time()
-
 print(f"[INFO] Training finished. Total time: {end_train - start_train} seconds")
+
+save_plot(trained_model_dir)

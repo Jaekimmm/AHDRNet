@@ -3,6 +3,7 @@ import torch
 from torch.nn import init
 from torch import nn
 import numpy as np
+import matplotlib.pyplot as plt
 
 def mk_dir(dir_path):
     if not os.path.exists(dir_path):
@@ -172,3 +173,52 @@ def psnr_tanh_norm_mu_tonemap(hdr_nonlinear_ref, hdr_nonlinear_res, percentile=9
     norm_perc = np.percentile(hdr_linear_ref, percentile)
     
     return psnr(tanh_norm_mu_tonemap(hdr_linear_ref, norm_perc), tanh_norm_mu_tonemap(hdr_linear_res, norm_perc))
+
+def save_plot(trained_model_dir):
+    # CSV 파일 읽기 (첫 번째 행이 헤더라면 skiprows=1)
+    file_path = trained_model_dir + '/plot_data.txt' 
+    data = np.loadtxt(file_path, delimiter=",", skiprows=0)
+
+    # CSV에서 데이터 읽기 (0번째 열: epoch, 1번째 열: train_loss, 2번째 열: val_loss)
+            # fplot.write(f'{epoch},{train_loss},{valid_loss},{psnr},{psnr_mu}\n')
+    epochs = data[1:, 0]
+    train_loss = data[1:, 1]
+    val_loss = data[1:, 2]
+
+    # 그래프 그리기
+    plt.figure(figsize=(8, 5))
+    plt.plot(epochs, train_loss, label="Training Loss", color="blue", linewidth=2)
+    plt.plot(epochs, val_loss, label="Validation Loss", color="red", linestyle="dashed", linewidth=2)
+
+    # 그래프 꾸미기
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Training & Validation Loss Curve")
+    plt.legend()
+    plt.grid(True)
+
+    plt.savefig(f"{trained_model_dir}/curve_loss.png", dpi=300, bbox_inches="tight")  # 고해상도 저장
+
+
+    # CSV에서 데이터 읽기 (0번째 열: epoch, 1번째 열: train_loss, 2번째 열: val_loss)
+            # fplot.write(f'{epoch},{train_loss},{valid_loss},{psnr},{psnr_mu}\n')
+    epochs = data[:, 0]
+    psnr_l = data[:, 3]
+    psnr_m = data[:, 4]
+
+    # 그래프 그리기
+    plt.figure(figsize=(8, 5))
+    plt.plot(epochs, psnr_l, label="PSNR", color="blue", linewidth=2)
+    plt.plot(epochs, psnr_m, label="PSNR_mu", color="red",  linewidth=2)
+    plt.axhline(y=43.7708, color="blue", linestyle="--", linewidth=2, label="PSNR (Baseline)")
+    plt.axhline(y=47.1223, color="red",  linestyle="--", linewidth=2, label="PSNR_mu (Baseline)")
+
+    # 그래프 꾸미기
+    plt.xlabel("Epoch")
+    plt.ylabel("PSNR")
+    plt.title("PSNR Curve")
+    plt.legend()
+    plt.grid(True)
+
+    plt.savefig(f"{trained_model_dir}/curve_psnr.png", dpi=300, bbox_inches="tight")  # 고해상도 저장
+    
