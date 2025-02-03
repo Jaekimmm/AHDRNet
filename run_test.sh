@@ -1,1 +1,1 @@
-python script_testing.py --model AHDR
+python script_testing.py --model "AHDR" --run_name "org" --format "rgb"
