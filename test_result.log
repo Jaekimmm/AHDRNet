@@ -1,0 +1,2 @@
+model, run name, run time, average loss, psnr, psnr_mu, description
+AHDR, org, 02/03 15:57:07, 0.000074, 41.066174, 40.913260, origital AHDR & early termination (epoch 41) 
