@@ -13,6 +13,9 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 import glob
+from utils import *
+import imageio
+from datetime import datetime
 
 def mk_trained_dir_if_not(dir_path):
     if not os.path.exists(dir_path):
@@ -21,7 +24,7 @@ def mk_trained_dir_if_not(dir_path):
 
 
 def model_restore(model, trained_model_dir):
-    model_list = glob.glob((trained_model_dir + "/*.pkl"))
+    model_list = glob.glob((trained_model_dir + "/trained_*.pkl"))
     a = []
     for i in range(len(model_list)):
         index = int(model_list[i].split('model')[-1].split('.')[0])
@@ -33,16 +36,20 @@ def model_restore(model, trained_model_dir):
     return model, epoch
 
 
-class data_loader(data.Dataset, patch_div=1, crop_size=256, geometry_aug=True):
-    def __init__(self, list_dir):
+class data_loader(data.Dataset):
+    def __init__(self, list_dir, patch_div=1, crop_size=0, geometry_aug=False):
+        super().__init__()
+        self.patch_div = patch_div
+        self.crop_size = crop_size
+        self.geometry_aug = geometry_aug
+        
+        with open(list_dir) as f:
+            self.list_txt = f.readlines()
         f = open(list_dir)
         self.list_txt = f.readlines()
         self.length = len(self.list_txt)
 
-
-
     def __getitem__(self, index):
-
         sample_path = self.list_txt[index]
         sample_path = sample_path.strip()
 
@@ -51,12 +58,12 @@ class data_loader(data.Dataset, patch_div=1, crop_size=256, geometry_aug=True):
             f = h5py.File(sample_path, 'r')
             #data = f['IN'][:]
             #label = f['GT'][:]
-            data = self.crop_for_patch(f['IN'][:], patch_div=patch_div)
-            label = self.crop_for_patch(f['GT'][:], patch_div=patch_div)
+            data = self.crop_for_patch(f['IN'][:], self.patch_div)
+            label = self.crop_for_patch(f['GT'][:], self.patch_div)
             f.close()
             #crop_size = 256
-            if crom_size > 0 : data, label = self.imageCrop(data, label, crop_size)
-            if geometry_aug : data, label = self.image_Geometry_Aug(data, label)
+            if self.crop_size > 0 : data, label = self.imageCrop(data, label, self.crop_size)
+            if self.geometry_aug : data, label = self.image_Geometry_Aug(data, label)
 
 
         # print(sample_path)
@@ -138,7 +145,16 @@ def get_lr(epoch, lr, max_epochs):
         lr = 0.1 * lr
     return lr
 
-def train(epoch, model, train_loaders, optimizer, trained_model_dir, args):
+def rgb_to_mono(tensor):
+    r, g, b = tensor[:, 0, :, :], tensor[:, 1, :, :], tensor[:, 2, :, :]
+    mono = 0.299 * r + 0.587 * g + 0.114 * b
+    return mono.unsqueeze(1)
+def rgb_to_mono_gt(tensor):
+    r, g, b = tensor[:, 0, :], tensor[:, 1, :], tensor[:, 2, :]
+    mono = 0.299 * r + 0.587 * g + 0.114 * b
+    return mono.unsqueeze(1)
+
+def train(epoch, model, train_loaders, optimizer, trained_model_dir, args, mono=False):
     lr = get_lr(epoch, args.lr, args.epochs)
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
@@ -154,9 +170,15 @@ def train(epoch, model, train_loaders, optimizer, trained_model_dir, args):
         end = time.time()
 
 ############  used for End-to-End code
-        data1 = torch.cat((data[:, 0:3, :, :], data[:, 9:12, :, :]), dim=1)
-        data2 = torch.cat((data[:, 3:6, :, :], data[:, 12:15, :, :]), dim=1)
-        data3 = torch.cat((data[:, 6:9, :, :], data[:, 15:18, :, :]), dim=1)
+        if args.format == 'mono':
+            data_mono = torch.cat([rgb_to_mono(data[:, 3*i:3*(i+1), :, :]) for i in range(6)], dim=1)  # (batch, 6, 1, H, W)
+            data1 = torch.cat((data_mono[:, 0:1, :, :], data_mono[:, 3:4, :, :]), dim=1)
+            data2 = torch.cat((data_mono[:, 1:2, :, :], data_mono[:, 4:5, :, :]), dim=1)
+            data3 = torch.cat((data_mono[:, 2:3, :, :], data_mono[:, 5:6, :, :]), dim=1)
+        else:
+            data1 = torch.cat((data[:, 0:3, :, :], data[:, 9:12, :, :]), dim=1)
+            data2 = torch.cat((data[:, 3:6, :, :], data[:, 12:15, :, :]), dim=1)
+            data3 = torch.cat((data[:, 6:9, :, :], data[:, 15:18, :, :]), dim=1)
         optimizer.zero_grad()
         output = model(data1, data2, data3)
 
@@ -189,9 +211,11 @@ def train(epoch, model, train_loaders, optimizer, trained_model_dir, args):
     avg_loss /= len(train_loaders)
     return avg_loss
 
-def testing_fun(model, test_loaders, args):
+def testing_fun(model, test_loaders, outdir, args):
     model.eval()
     test_loss = 0
+    val_psnr = 0
+    val_psnr_mu = 0
     num = 0
     
     for data, target in test_loaders:
@@ -200,18 +224,48 @@ def testing_fun(model, test_loaders, args):
             data, target = data.cuda(), target.cuda()
 
         with torch.no_grad():
-            data1 = torch.cat((data[:, 0:3, :], data[:, 9:12, :]), dim=1)
-            data2 = torch.cat((data[:, 3:6, :], data[:, 12:15, :]), dim=1)
-            data3 = torch.cat((data[:, 6:9, :], data[:, 15:18, :]), dim=1)
+            if args.format == 'mono':
+                data_mono = torch.cat([rgb_to_mono_gt(data[:, 3*i:3*(i+1), :]) for i in range(6)], dim=1)  # (batch, 6, 1, H, W)
+                data1 = torch.cat((data_mono[:, 0:1, :], data_mono[:, 3:4, :]), dim=1)
+                data2 = torch.cat((data_mono[:, 1:2, :], data_mono[:, 4:5, :]), dim=1)
+                data3 = torch.cat((data_mono[:, 2:3, :], data_mono[:, 5:6, :]), dim=1)
+            else:
+                data1 = torch.cat((data[:, 0:3, :], data[:, 9:12, :]), dim=1)
+                data2 = torch.cat((data[:, 3:6, :], data[:, 12:15, :]), dim=1)
+                data3 = torch.cat((data[:, 6:9, :], data[:, 15:18, :]), dim=1)
             output = model(data1, data2, data3)
 
         # save the result to .H5 files
-        hdrfile = h5py.File('./result_' + args.model +"/" + Test_Data_name + '_hdr.h5', 'w')
+        hdrfile = h5py.File(outdir + "/" + Test_Data_name + '_hdr.h5', 'w')
         img = output[0, :, :, :]
         img = tv.utils.make_grid(img.data.cpu()).numpy()
         hdrfile.create_dataset('data', data=img)
         hdrfile.close()
+        
+        # save the result as tif w/ tonemapping (copy from freeSoul)
+        gamma = 2.24 #degamma
+        img = torch.squeeze(output)
+        img = img.data.cpu().numpy().astype(np.float32)
+        img = np.transpose(img, (2, 1, 0))
+        img = img[:, :, [0, 1, 2]]
+        img = img ** gamma
+        norm_perc = np.percentile(img, 99)
+        img = tanh_norm_mu_tonemap(img, norm_perc)
+        imageio.imwrite(outdir + "/" + Test_Data_name + '.tif', img, 'tif')
+        
+        #########  Prepare to calculate metrics
+        psnr_output = torch.squeeze(output[0].clone())
+        psnr_target = torch.squeeze(target.clone())
+        psnr_output = psnr_output.data.cpu().numpy().astype(np.float32)
+        psnr_target = psnr_target.data.cpu().numpy().astype(np.float32)
+        
+        #########  Calculate metrics
+        psnr = normalized_psnr(psnr_output, psnr_target, psnr_target.max())
+        psnr_mu = psnr_tanh_norm_mu_tonemap(psnr_target, psnr_output)
 
+        val_psnr += psnr
+        val_psnr_mu += psnr_mu
+        
         hdr = torch.log(1 + 5000 * output.cpu()) / torch.log(
             Variable(torch.from_numpy(np.array([1 + 5000])).float()))
         target = torch.log(1 + 5000 * target).cpu() / torch.log(
@@ -221,8 +275,14 @@ def testing_fun(model, test_loaders, args):
         num = num + 1
 
     test_loss = test_loss / len(test_loaders.dataset)
+    val_psnr = val_psnr / len(test_loaders.dataset)
+    val_psnr_mu = val_psnr_mu / len(test_loaders.dataset)
     print('\n Test set: Average Loss: {:.4f}'.format(test_loss.item()))
 
+    run_time = datetime.now().strftime('%m/%d %H:%M:%S')
+    flog = open('./test_result.log', 'a')
+    flog.write(f'{args.model}, {args.run_name}, {run_time}, {test_loss:.6f}, {val_psnr:.6f}, {val_psnr_mu:.06f}\n')
+    flog.close()
     return test_loss
 
 
@@ -230,6 +290,7 @@ def validation(epoch, model, valid_loaders, trained_model_dir, args):
     model.eval()
     val_psnr = 0
     val_psnr_mu = 0
+    valid_loss = 0
     valid_num = len(valid_loaders)
     
     for batch_idx, (data, target) in enumerate(valid_loaders):
@@ -237,11 +298,24 @@ def validation(epoch, model, valid_loaders, trained_model_dir, args):
             data, target = data.cuda(), target.cuda()
         
         with torch.no_grad():
-            data1 = torch.cat((data[:, 0:3, :], data[:, 9:12, :]), dim=1)
-            data2 = torch.cat((data[:, 3:6, :], data[:, 12:15, :]), dim=1)
-            data3 = torch.cat((data[:, 6:9, :], data[:, 15:18, :]), dim=1)
+            if args.format == 'mono':
+                data_mono = torch.cat([rgb_to_mono_gt(data[:, 3*i:3*(i+1), :]) for i in range(6)], dim=1)  # (batch, 6, 1, H, W)
+                data1 = torch.cat((data_mono[:, 0:1, :], data_mono[:, 3:4, :]), dim=1)
+                data2 = torch.cat((data_mono[:, 1:2, :], data_mono[:, 4:5, :]), dim=1)
+                data3 = torch.cat((data_mono[:, 2:3, :], data_mono[:, 5:6, :]), dim=1)
+            else:
+                data1 = torch.cat((data[:, 0:3, :], data[:, 9:12, :]), dim=1)
+                data2 = torch.cat((data[:, 3:6, :], data[:, 12:15, :]), dim=1)
+                data3 = torch.cat((data[:, 6:9, :], data[:, 15:18, :]), dim=1)
             output = model(data1, data2, data3)
     
+        #########  make the loss
+        output = torch.log(1 + 5000 * output.cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
+        target = torch.log(1 + 5000 * target.cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
+        
+        loss = F.l1_loss(output, target)
+        valid_loss = valid_loss + loss
+        
         #########  Prepare to calculate metrics
         psnr_output = torch.squeeze(output[0].clone())
         psnr_target = torch.squeeze(target.clone())
@@ -255,13 +329,22 @@ def validation(epoch, model, valid_loaders, trained_model_dir, args):
         val_psnr = val_psnr + psnr
         val_psnr_mu = val_psnr_mu + psnr_mu
         
+    valid_loss = valid_loss / valid_num
     val_psnr = val_psnr / valid_num
     val_psnr_mu = val_psnr_mu / valid_num
-    print('Validation Epoch {}: Average PSNR: {:.4f}, PSNR_mu: {:.4f}'.format(val_psnr, val_psnr_mu))
+    print('[Validation] Epoch {}: avg_loss: {:.4f}, Average PSNR: {:.4f}, PSNR_mu: {:.4f}'.format(epoch, valid_loss, val_psnr, val_psnr_mu))
     
-    return val_psnr, val_psnr_mu
+    fname = trained_model_dir + '/psnr.txt'
+    try:
+        fobj = open(fname, 'a')
+    except IOError:
+        print('open error')
+    else:
+        fobj.write('Epoch {}: Average PSNR: {:.4f}, PSNR_mu: {:.4f}\n'.format(epoch, val_psnr, val_psnr_mu))
+        fobj.close()
+    
+    return valid_loss, val_psnr, val_psnr_mu
 
-# Not used in my code
 class testimage_dataloader(data.Dataset):
     def __init__(self, list_dir):
         f = open(list_dir)
@@ -269,7 +352,9 @@ class testimage_dataloader(data.Dataset):
         self.length = len(self.list_txt)
 
     def __getitem__(self, index):
-        sample_path = self.list_txt[index][:-1]
+        sample_path = self.list_txt[index]
+        sample_path = sample_path.strip()
+        
         if os.path.exists(sample_path):
             f = h5py.File(sample_path, 'r')
             data = f['IN'][:]
