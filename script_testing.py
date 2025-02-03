@@ -10,10 +10,11 @@ import os
 
 parser = argparse.ArgumentParser(description='Attention-guided HDR')
 
-parser.add_argument('--model', type=str, default='AHDR',)
-parser.add_argument('--test_whole_Image', default='./test.txt')
+parser.add_argument('--model', type=str, default='AHDR')
+parser.add_argument('--run_name', type=str, default='')
+parser.add_argument('--format', type=str, default='rgb')
+parser.add_argument('--test_whole_Image', default='./data_test.txt')
 parser.add_argument('--use_cuda', default=True)
-parser.add_argument('--cuda_devices', type=str, default='0,1,2,3,4,5,6,7')
 parser.add_argument('--load_model', default=True)
 parser.add_argument('--lr', default=0.0001)
 parser.add_argument('--seed', default=1)
@@ -31,9 +32,8 @@ torch.manual_seed(args.seed)
 print("\n\n << CUDA devices >>")
 if args.use_cuda and torch.cuda.is_available():
     torch.cuda.manual_seed(args.seed)
-    if args.cuda_devices:
-        os.environ['CUDA_VISIBLE_DEVICES'] = args.cuda_devices
-    print(f"Number of visible CUDA devices: {torch.cuda.device_count()}")
+    cuda_count = torch.cuda.device_count()
+    print(f"Number of visible CUDA devices: {cuda_count}")
     print(f"CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES')}\n")
 else:
     print("CUDA is not available.\n")
@@ -42,9 +42,15 @@ else:
 testimage_dataset = torch.utils.data.DataLoader(
     testimage_dataloader(args.test_whole_Image),
     batch_size=1)
+valid_loaders = torch.utils.data.DataLoader(
+    data_loader(args.test_whole_Image),
+    batch_size=1, shuffle=True)
 
 #make folders of trained model and result
-outdir = f"./result_{args.model}"
+if args.run_name:
+    outdir = f"./result-{args.model}-{args.run_name}"
+else:
+    outdir = f"./result-{args.model}"
 mk_dir(outdir)
 
 def weights_init_kaiming(m):
@@ -62,7 +68,7 @@ def weights_init_kaiming(m):
 if args.model in globals():
     model = globals()[args.model]
 print(f"\nRun test with model {model}\n")
-
+    
 model = model(args)
 model.apply(weights_init_kaiming)
 if args.use_cuda:
@@ -71,13 +77,18 @@ if args.use_cuda:
 ##
 start_step = 0
 # if args.load_model and len(os.listdir(args.trained_model_dir)):
-trained_model_dir = f"./trained-model-{args.model}"
+if args.run_name:
+    trained_model_dir = f"./trained-model-{args.model}-{args.run_name}/"
+else:
+    trained_model_dir = f"./trained-model-{args.model}/"
 trained_model_filename = f"{args.model}_model.pt"
+#trained_model_filename = f"best_trained_model_{args.model}.pkl"
 model = model_load(model, trained_model_dir, trained_model_filename)
 
 # In the testing, we test on the whole image, so we defind a new variable
 #  'Image_test_loaders' used to load the whole image
 start = time.time()
-loss = testing_fun(model, testimage_dataset, args)
+loss = testing_fun(model, testimage_dataset, outdir, args)
+
 end = time.time()
 print('Running Time: {} seconds'.format(end - start))
