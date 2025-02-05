@@ -13,6 +13,7 @@ parser = argparse.ArgumentParser(description='Attention-guided HDR')
 parser.add_argument('--model', type=str, default='AHDR')
 parser.add_argument('--run_name', type=str, default='')
 parser.add_argument('--format', type=str, default='rgb')
+parser.add_argument('--epoch', type=int, default=0)
 parser.add_argument('--test_whole_Image', default='./data_test.txt')
 parser.add_argument('--use_cuda', default=True)
 parser.add_argument('--load_model', default=True)
@@ -48,9 +49,15 @@ valid_loaders = torch.utils.data.DataLoader(
 
 #make folders of trained model and result
 if args.run_name:
-    outdir = f"./result-{args.model}-{args.run_name}/"
+    if args.epoch > 0:
+        outdir = f"./result-{args.model}-{args.run_name}-e{args.epoch}/"
+    else:
+        outdir = f"./result-{args.model}-{args.run_name}-best/"
 else:
-    outdir = f"./result-{args.model}/"
+    if args.epoch > 0:
+        outdir = f"./result-{args.model}-e{args.epoch}/"
+    else:
+        outdir = f"./result-{args.model}-best/"
 mk_dir(outdir)
 
 def weights_init_kaiming(m):
@@ -82,7 +89,10 @@ if args.run_name:
 else:
     trained_model_dir = f"./trained-model-{args.model}/"
 #trained_model_filename = f"{args.model}_model.pt"
-trained_model_filename = f"best_trained_model_{args.model}.pkl"
+if args.epoch > 0:
+    trained_model_filename = f"trained_model{args.epoch}.pkl"
+else:
+    trained_model_filename = f"best_trained_model_{args.model}.pkl"
 model = model_load(model, trained_model_dir, trained_model_filename)
 
 # In the testing, we test on the whole image, so we defind a new variable
