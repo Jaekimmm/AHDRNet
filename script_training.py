@@ -12,19 +12,20 @@ from running_func import *
 from utils import *
 import os
 from torchinfo import summary
+from distutils.util import strtobool
 
 parser = argparse.ArgumentParser(description='Attention-guided HDR')
 
 parser.add_argument('--model', type=str, default='AHDR')
 parser.add_argument('--run_name', type=str, default='')
 parser.add_argument('--format', type=str, default='rgb')
+parser.add_argument('--early_term', action='store_true', default=False)
 parser.add_argument('--train_data', default='./data_train.txt')
 parser.add_argument('--valid_data', default='./data_valid.txt')
 parser.add_argument('--test_whole_Image', default='./data_test.txt')
 parser.add_argument('--use_cuda', default=True)
 parser.add_argument('--restore', default=True)
 parser.add_argument('--load_model', default=True)
-parser.add_argument('--early_term', type=bool, default=True)
 parser.add_argument('--lr', default=0.0001)
 parser.add_argument('--seed', default=1)
 parser.add_argument('--batchsize', default=8)
@@ -75,8 +76,8 @@ def weights_init_kaiming(m):
 ##
 if args.model in globals():
     model = globals()[args.model]
-print(f"\n[INFO] Start training with model {model}")
-print(f"\n[INFO] Early termination : {args.early_term}")
+print(f"[INFO] Start training with model {model}")
+print(f"[INFO] Early termination : {args.early_term}")
 
 model = nn.DataParallel(model(args))
 model.apply(weights_init_kaiming)
@@ -95,7 +96,7 @@ start_step = 0
 
 if args.restore and len(os.listdir(trained_model_dir)):
     model, start_step = model_restore(model, trained_model_dir)
-    print('restart from {} step'.format(start_step))
+    print('[INFO] restart from {} step'.format(start_step))
 
 early_stopping = EarlyStopping(patience=7, delta=0, mode='min', verbose=True)
 
@@ -106,6 +107,7 @@ for epoch in range(start_step + 1, args.epochs + 1):
     train_loss = train(epoch, model, train_loaders, optimizer, trained_model_dir, args)
     end = time.time()
     print('epoch:{}, cost {:.4f} seconds, loss {:.4f}'.format(epoch, end - start, train_loss))
+    
     if epoch % args.save_model_interval == 0:
         model_name = trained_model_dir + 'trained_model{}.pkl'.format(epoch)
         torch.save(model.state_dict(), model_name)
@@ -121,13 +123,17 @@ for epoch in range(start_step + 1, args.epochs + 1):
         fplot.close()
     
     if early_stopping.best_update:
-        model_name = trained_model_dir + 'best_trained_model_{}.pkl'.format(args.model)
+        model_name = './trained_model{}.pkl'.format(epoch)
+        best_link_name = trained_model_dir + 'best_trained_model_{}.pkl'.format(args.model)
         torch.save(model.state_dict(), model_name)
+        if os.path.exists(best_link_name):
+            os.unlink(best_link_name) 
+        os.symlink(model_name, best_link_name)
         print(f"[INFO] Best model saved at epoch {epoch}")
     
     if early_stopping.early_stop and args.early_term:
         print("[INFO] Early Stopped")
-        break
+       # break
 end_train = time.time()
 print(f"[INFO] Training finished. Total time: {end_train - start_train} seconds")
 
