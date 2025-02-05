@@ -139,10 +139,10 @@ class data_loader(data.Dataset):
         
 
 def get_lr(epoch, lr, max_epochs):
-    if epoch <= max_epochs * 0.8:
-        lr = lr
-    else:
-        lr = 0.1 * lr
+    #if epoch <= max_epochs * 0.8:
+    #    lr = lr
+    #else:
+    #    lr = 0.1 * lr
     return lr
 
 def rgb_to_mono(tensor):
@@ -158,7 +158,7 @@ def train(epoch, model, train_loaders, optimizer, trained_model_dir, args, mono=
     lr = get_lr(epoch, args.lr, args.epochs)
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
-    print('lr: {}'.format(optimizer.param_groups[0]['lr']))
+    print('[INFO] lr: {}'.format(optimizer.param_groups[0]['lr']))
     model.train()
     num = 0
     trainloss = 0
@@ -200,7 +200,6 @@ def train(epoch, model, train_loaders, optimizer, trained_model_dir, args, mono=
             fname = trained_model_dir + 'lossTXT.txt'
             try:
                 fobj = open(fname, 'a')
-
             except IOError:
                 print('open error')
             else:
@@ -281,7 +280,7 @@ def testing_fun(model, test_loaders, outdir, args):
 
     run_time = datetime.now().strftime('%m/%d %H:%M:%S')
     flog = open('./test_result.log', 'a')
-    flog.write(f'{args.model}, {args.run_name}, {run_time}, {test_loss:.6f}, {val_psnr:.6f}, {val_psnr_mu:.06f}\n')
+    flog.write(f'{args.model}, {args.run_name}, {arhs.epoch}, {run_time}, {test_loss:.6f}, {val_psnr:.6f}, {val_psnr_mu:.06f}\n')
     flog.close()
     return test_loss
 
@@ -332,7 +331,7 @@ def validation(epoch, model, valid_loaders, trained_model_dir, args):
     valid_loss = valid_loss / valid_num
     val_psnr = val_psnr / valid_num
     val_psnr_mu = val_psnr_mu / valid_num
-    print('[Validation] Epoch {}: avg_loss: {:.4f}, Average PSNR: {:.4f}, PSNR_mu: {:.4f}'.format(epoch, valid_loss, val_psnr, val_psnr_mu))
+    print('Validation Epoch {}: avg_loss: {:.4f}, Average PSNR: {:.4f}, PSNR_mu: {:.4f}'.format(epoch, valid_loss, val_psnr, val_psnr_mu))
     
     fname = trained_model_dir + '/psnr.txt'
     try:
