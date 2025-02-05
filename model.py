@@ -40,6 +40,7 @@ class AHDR(nn.Module):
         nFeat = args.nFeat
         growthRate = args.growthRate
         self.args = args
+        print(f"[INFO] nChannel : {nChannel}, nDenselayer : {nDenselayer}, nFeat : {nFeat}, growthRate : {growthRate}")
 
         # F-1
         self.conv1 = nn.Conv2d(nChannel, nFeat, kernel_size=3, padding=1, bias=True)
@@ -103,3 +104,182 @@ class AHDR(nn.Module):
         output = nn.functional.sigmoid(output)
 
         return output
+
+class SOL_2_6_2_2(nn.Module):
+    def __init__(self, args):
+        super(SOL_2_6_2_2, self).__init__()
+        nChannel = args.nChannel
+        nFeat = args.nFeat
+        self.args = args
+        self.gamma = 0.45
+
+
+        ### Extract Feature Map
+
+        self.conv1 = nn.Sequential(
+          nn.Conv2d(nChannel, nFeat, kernel_size=3, padding=1),
+          nn.ReLU()
+        )
+        
+        self.conv2 = nn.Sequential(
+          nn.Conv2d(nChannel, nFeat, kernel_size=3, padding=1),
+          nn.ReLU()
+        )
+
+        self.conv3 = nn.Sequential(
+          nn.Conv2d(nChannel, nFeat, kernel_size=3, padding=1),
+          nn.ReLU()
+        )
+        
+        self.conv1_2 = nn.Sequential(
+          nn.Conv2d(nChannel, nFeat, kernel_size=3, padding=1),
+          nn.ReLU()
+        )
+        
+        self.conv2_2 = nn.Sequential(
+          nn.Conv2d(nChannel, nFeat, kernel_size=3, padding=1),
+          nn.ReLU()
+        )
+        
+        self.conv2_3 = nn.Sequential(
+          nn.Conv2d(nChannel, nFeat, kernel_size=3, padding=1),
+          nn.ReLU()
+        )
+        
+        self.conv3_3 = nn.Sequential(
+          nn.Conv2d(nChannel, nFeat, kernel_size=3, padding=1),
+          nn.ReLU()
+        )
+        
+        
+        
+        #############
+
+        self.att1 = nn.Sequential(
+          nn.Conv2d(nFeat*2, nFeat*2, kernel_size=3, padding=1, bias=True),
+          nn.ReLU(),
+          nn.Conv2d(nFeat*2, nFeat, kernel_size=3, padding=1, bias=True),
+          nn.Sigmoid()
+        )
+        
+        self.att3 = nn.Sequential(
+          nn.Conv2d(nFeat*2, nFeat*2, kernel_size=3, padding=1, bias=True),
+          nn.ReLU(),
+          nn.Conv2d(nFeat*2, nFeat, kernel_size=3, padding=1, bias=True),
+          nn.Sigmoid()
+        )
+        
+        #############
+        ## Align
+        #############
+
+        self.align_mul1 = nn.Sequential(
+          nn.Conv2d(nFeat, nFeat, kernel_size=3, padding=1, bias=True),
+          nn.ReLU()
+        )
+        
+        self.align_add1 = nn.Sequential(
+          nn.Conv2d(nFeat, nFeat, kernel_size=3, padding=1, bias=True),
+          nn.ReLU()
+        )
+
+        self.align_mul3 = nn.Sequential(
+          nn.Conv2d(nFeat, nFeat, kernel_size=3, padding=1, bias=True),
+          nn.ReLU()
+        )
+        
+        self.align_add3 = nn.Sequential(
+          nn.Conv2d(nFeat, nFeat, kernel_size=3, padding=1, bias=True),
+          nn.ReLU()
+        )
+
+        
+        self.convOut1 = nn.Sequential(
+          nn.Conv2d(nFeat, nFeat, kernel_size=3, padding=1),
+          nn.ReLU(),
+          nn.Conv2d(nFeat, nFeat, kernel_size=3, padding=1),
+          nn.ReLU(),
+          # nn.Conv2d(nFeat, nChannel, kernel_size=3, padding=1),
+          # nn.Sigmoid()
+        )
+
+        self.convOut2 = nn.Sequential(
+          nn.Conv2d(nFeat, nFeat, kernel_size=3, padding=1),
+          nn.ReLU(),
+          nn.Conv2d(nFeat, nFeat, kernel_size=3, padding=1),
+          nn.ReLU(),
+          # nn.Conv2d(nFeat, nChannel, kernel_size=3, padding=1),
+          # nn.Sigmoid()
+        )
+
+        self.convOut3 = nn.Sequential(
+          nn.Conv2d(nFeat*3, nFeat*3, kernel_size=3, padding=1),
+          nn.ReLU(),
+          nn.Conv2d(nFeat*3, nFeat*3, kernel_size=3, padding=1),
+          nn.ReLU(),
+          nn.Conv2d(nFeat*3, nFeat*3, kernel_size=3, padding=1),
+          nn.ReLU(),
+        )
+        
+        self.convOut4 = nn.Sequential(
+          nn.Conv2d(nFeat*3, nChannel, kernel_size=1, padding=0),
+          nn.Sigmoid()
+        )
+        
+    def forward(self, x1, x2, x3, x1_att_in_1, x2_att_in_1, x2_att_in_3, x3_att_in_3):
+      
+            # data1 = torch.cat((data[:, 18:21, :, :], data[:, 9:12, :, :]), dim=1) LDR(normalized) + HDR_short
+            # data2_1 = torch.cat((data[:, 3:6, :, :], data[:, 12:15, :, :]), dim=1) LDR(mid) + HDR_ref
+            # data2_2 = torch.cat((data[:, 21:24, :, :], data[:, 12:15, :, :]), dim=1) LDR(mid_long normlized) + HDR_ref
+            # data3 = torch.cat((data[:, 6:9, :, :], data[:, 15:18, :, :]), dim=1) LDR + HDR_long
+        
+        # x1_sat = self.imageThresClipping(x1, 1/exp[:,1], 'upper')
+        # x1_att_in_1 = self.imageApplyGainAndClip(x1_sat, exp[:,1], self.gamma)
+        # x2_att_in_1 = self.imageApplyGainAndClip(x2, exp[:,1], self.gamma)
+        
+        # x2_sat = self.imageThresClipping(x2, 1/exp[:,2], 'upper')
+        # x2_att_in_3 = self.imageApplyGainAndClip(x2_sat, exp[:,2], self.gamma)
+        # x3_att_in_3 = self.imageApplyGainAndClip(x3, exp[:,2], self.gamma)
+        
+        # low HDR + saturated image
+              
+
+        F1_ = self.conv1(x1)
+        F2_ = self.conv2(x2)
+        F3_ = self.conv3(x3)
+        
+        F1A_2 = self.conv1_2(x1_att_in_1)
+        F2A_2 = self.conv2_2(x2_att_in_1)
+        F2A_3 = self.conv2_3(x2_att_in_3)
+        F3A_3 = self.conv3_3(x3_att_in_3)
+        
+        F12_ = torch.cat((F1A_2, F2A_2), 1)
+        F23_ = torch.cat((F2A_3, F3A_3), 1)
+        
+        F1_att = self.att1(F12_)
+        F3_att = self.att3(F23_)
+        
+        F1_ = F1_ * F1_att
+        F3_ = F3_ * F3_att
+        
+        F1_MUL = self.align_mul1(F1_)
+        F1_ADD = self.align_add1(F1_)
+        
+        F3_MUL = self.align_mul3(F3_)
+        F3_ADD = self.align_add3(F3_)
+        
+        F12_Aligned = F1_MUL * F2_ + F1_ADD
+        
+        F12_Aligned = self.convOut1(F12_Aligned)
+        
+        F23_Aligned = F3_MUL * F2_ + F3_ADD
+        
+        F23_Aligned = self.convOut2(F23_Aligned)
+        
+        output = torch.cat((F12_Aligned, F23_Aligned, F2_), 1)  
+        
+        output = self.convOut3(output)
+        
+        output = self.convOut4(output)
+        
+        return output      
