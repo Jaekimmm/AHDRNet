@@ -1,4 +1,3 @@
-import torch
 import numpy as np
 import time
 import argparse
@@ -8,7 +7,7 @@ from torch.nn import init
 from dataset import DatasetFromHdf5
 
 from model import *
-from running_func import *
+from running_func_ch import *
 from utils import *
 import os
 from torchinfo import summary
@@ -26,7 +25,7 @@ parser.add_argument('--test_whole_Image', default='./data_test.txt')
 parser.add_argument('--use_cuda', default=True)
 parser.add_argument('--restore', default=True)
 parser.add_argument('--load_model', default=True)
-parser.add_argument('--lr', type=float, default=0.0001)
+parser.add_argument('--lr', default=0.0001)
 parser.add_argument('--seed', default=1)
 parser.add_argument('--batchsize', default=8)
 parser.add_argument('--epochs', type=int, default=800000)
@@ -56,7 +55,7 @@ train_loaders = torch.utils.data.DataLoader(
     data_loader(args.train_data, patch_div=1, crop_size=256, geometry_aug=True, color=args.format),
     batch_size=args.batchsize, shuffle=True)
 valid_loaders = torch.utils.data.DataLoader(
-    data_loader(args.valid_data, crop_size=1496, color=args.format),
+    data_loader(args.valid_data, color=args.format),
     batch_size=1, shuffle=False)
 
 #make folders of trained model and result
@@ -111,14 +110,13 @@ for epoch in range(start_step + 1, args.epochs + 1):
     if epoch % args.save_model_interval == 0:
         model_name = trained_model_dir + 'trained_model{}.pkl'.format(epoch)
         torch.save(model.state_dict(), model_name)
-        DEBUG_FLAG = 1
-        valid_loss, psnr, psnr_mu = validation(epoch, model, valid_loaders, trained_model_dir, args)
-        fname = trained_model_dir + 'plot_data.txt'
-        try: fplot = open(fname, 'a')
-        except IOError: print('Cannot open')
-        else: 
-            fplot.write(f'{epoch},{train_loss},{valid_loss},{psnr},{psnr_mu}\n')
-            fplot.close()
+        #valid_loss, psnr, psnr_mu = validation(epoch, model, valid_loaders, trained_model_dir, args)
+        #fname = trained_model_dir + 'plot_data.txt'
+        #try: fplot = open(fname, 'a')
+        #except IOError: print('Cannot open')
+        #else: 
+        #    fplot.write(f'{epoch},{train_loss},{valid_loss},{psnr},{psnr_mu}\n')
+        #    fplot.close()
         
             
     #valid_loss, psnr, psnr_mu = validation(epoch, model, valid_loaders, trained_model_dir, args)

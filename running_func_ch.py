@@ -72,9 +72,7 @@ class data_loader(data.Dataset):
                 data = torch.cat([rgb_to_yuv(data[3*i:3*(i+1), :, :]) for i in range(6)], dim=0)  # (batch, 6, 1, H, W)
                 label = rgb_to_yuv(label)
                 #print(f"[INFO] YUV444 : data {data.shape} , label {label.shape}")
-            else:
-                data = data
-                label = label
+            #else:
                 #print(f"[INFO] RGB    : data {data.shape} , label {label.shape}")
                 
         # print(sample_path)
@@ -176,30 +174,43 @@ def train(epoch, model, train_loaders, optimizer, trained_model_dir, args, mono=
             data1 = torch.cat((data[:, 0:1, :, :], data[:, 3:4, :, :]), dim=1)
             data2 = torch.cat((data[:, 1:2, :, :], data[:, 4:5, :, :]), dim=1)
             data3 = torch.cat((data[:, 2:3, :, :], data[:, 5:6, :, :]), dim=1)
-        elif args.format == 'rgb':
-            data1 = torch.cat((data[:, 0:3, :, :], data[:, 9:12, :, :]), dim=1)
-            data2 = torch.cat((data[:, 3:6, :, :], data[:, 12:15, :, :]), dim=1)
-            data3 = torch.cat((data[:, 6:9, :, :], data[:, 15:18, :, :]), dim=1)
-        elif args.format == 'rgb_dual':
-            data1 = data[:,  9:12, :, :]
-            data2 = data[:, 12:15, :, :]
-            data3 = data[:, 15:18, :, :]
         else:
-            data1 = torch.cat((data[:, 0:3, :, :], data[:, 9:12, :, :]), dim=1)
-            data2 = torch.cat((data[:, 3:6, :, :], data[:, 12:15, :, :]), dim=1)
-            data3 = torch.cat((data[:, 6:9, :, :], data[:, 15:18, :, :]), dim=1)
+            #data1 = torch.cat((data[:, 0:3, :, :], data[:, 9:12, :, :]), dim=1)
+            #data2 = torch.cat((data[:, 3:6, :, :], data[:, 12:15, :, :]), dim=1)
+            #data3 = torch.cat((data[:, 6:9, :, :], data[:, 15:18, :, :]), dim=1)
+            # ✅ R 채널
+            data1 = torch.cat((data[:, 0:1, :, :], data[:, 9:10, :, :]), dim=1)
+            data2 = torch.cat((data[:, 3:4, :, :], data[:, 12:13, :, :]), dim=1)
+            data3 = torch.cat((data[:, 6:7, :, :], data[:, 15:16, :, :]), dim=1)
+
+            # ✅ G 채널
+            data1_g = torch.cat((data[:, 1:2, :, :], data[:, 10:11, :, :]), dim=1)
+            data2_g = torch.cat((data[:, 4:5, :, :], data[:, 13:14, :, :]), dim=1)
+            data3_g = torch.cat((data[:, 7:8, :, :], data[:, 16:17, :, :]), dim=1)
+
+            # ✅ B 채널
+            data1_b = torch.cat((data[:, 2:3, :, :], data[:, 11:12, :, :]), dim=1)
+            data2_b = torch.cat((data[:, 5:6, :, :], data[:, 14:15, :, :]), dim=1)
+            data3_b = torch.cat((data[:, 8:9, :, :], data[:, 17:18, :, :]), dim=1)
         optimizer.zero_grad()
-        output = model(data1, data2, data3)
+        output_r = model(data1, data2, data3)
+        output_g = model(data1_g, data2_g, data3_g)
+        output_b = model(data1_b, data2_b, data3_b)
 
 #########  make the loss
-        if(args.model == 'LIGHTFUSE'):
-            vgg_loss = VGGLoss('cuda')
-            loss = vgg_loss(output, target)
-        else:
-            output = torch.log(1 + 5000 * output.cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
-            target = torch.log(1 + 5000 * target.cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
-            loss = F.l1_loss(output, target)
+        output_r = torch.log(1 + 5000 * output_r[:, 0:1, :, :].cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
+        output_g = torch.log(1 + 5000 * output_g[:, 0:1, :, :].cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
+        output_b = torch.log(1 + 5000 * output_b[:, 0:1, :, :].cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
         
+        target_r = torch.log(1 + 5000 * target[:, 0:1, :, :].cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
+        target_g = torch.log(1 + 5000 * target[:, 1:2, :, :].cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
+        target_b = torch.log(1 + 5000 * target[:, 2:3, :, :].cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
+
+        loss_r = F.l1_loss(output_r, target_r)
+        loss_g = F.l1_loss(output_g, target_g)
+        loss_b = F.l1_loss(output_b, target_b)
+        
+        loss = loss_r + loss_g + loss_b
         loss.backward()
         optimizer.step()
         trainloss = trainloss + loss
@@ -243,13 +254,20 @@ def testing_fun(model, test_loaders, outdir, args):
                 data2 = torch.cat((data_mono[:, 1:2, :], data_mono[:, 4:5, :]), dim=1)
                 data3 = torch.cat((data_mono[:, 2:3, :], data_mono[:, 5:6, :]), dim=1)
             elif args.format == 'rgb':
-                data1 = torch.cat((data[:, 0:3, :], data[:,  9:12, :]), dim=1)
-                data2 = torch.cat((data[:, 3:6, :], data[:, 12:15, :]), dim=1)
-                data3 = torch.cat((data[:, 6:9, :], data[:, 15:18, :]), dim=1)
-            elif args.format == 'rgb_dual':
-                data1 = data[:,  9:12, :, :] #short+long 6ch
-                data2 = data[:, 12:15, :, :]
-                data3 = data[:, 15:18, :, :]
+                #data1 = torch.cat((data[:, 0:3, :], data[:,  9:12, :]), dim=1)
+                #data2 = torch.cat((data[:, 3:6, :], data[:, 12:15, :]), dim=1)
+                #data3 = torch.cat((data[:, 6:9, :], data[:, 15:18, :]), dim=1)
+                data1_r = torch.cat((data[:, 0:1, :], data[:,  9:10, :]), dim=1)
+                data2_r = torch.cat((data[:, 3:4, :], data[:, 12:13, :]), dim=1)
+                data3_r = torch.cat((data[:, 6:7, :], data[:, 15:16, :]), dim=1)
+
+                data1_g = torch.cat((data[:, 1:2, :], data[:, 10:11, :]), dim=1)
+                data2_g = torch.cat((data[:, 4:5, :], data[:, 13:14, :]), dim=1)
+                data3_g = torch.cat((data[:, 7:8, :], data[:, 16:17, :]), dim=1)
+
+                data1_b = torch.cat((data[:, 2:3, :], data[:, 11:12, :]), dim=1)
+                data2_b = torch.cat((data[:, 5:6, :], data[:, 14:15, :]), dim=1)
+                data3_b = torch.cat((data[:, 8:9, :], data[:, 17:18, :]), dim=1)
             else:
                 data_yuv = torch.cat([rgb_to_yuv_gt(data[:, 3*i:3*(i+1), :], args.format) for i in range(6)], dim=1)  # (batch, 6, 1, H, W)
                 target = rgb_to_yuv(target)
@@ -257,14 +275,23 @@ def testing_fun(model, test_loaders, outdir, args):
                 data1 = torch.cat((data_yuv[:, 0:3, :], data_yuv[:,  9:12, :]), dim=1)
                 data2 = torch.cat((data_yuv[:, 3:6, :], data_yuv[:, 12:15, :]), dim=1)
                 data3 = torch.cat((data_yuv[:, 6:9, :], data_yuv[:, 15:18, :]), dim=1)
-            output = model(data1, data2, data3)
+            #output = model(data1, data2, data3)
+            output_r = model(data1_r, data2_r, data3_r)
+            print(f"[INFO] output_r : {output_r.shape}")
+            output_g = model(data1_g, data2_g, data3_g)
+            print(f"[INFO] output_g : {output_g.shape}")
+            output_b = model(data1_b, data2_b, data3_b)
+            print(f"[INFO] output_b : {output_b.shape}")
 
-
+            output = torch.cat((output_r[:, 0:1, :, :], output_g[:, 0:1, :, :], output_b[:, 0:1, :, :]), dim=1)
+            print(f"[INFO] output : {output.shape}")
+            print(f"[INFO] target : {output.shape}")
+            #target_rgb = torch.cat((target_r, target_g, target_b), dim=1)
 
         # save the result to .H5 files
         hdrfile = h5py.File(outdir + "/" + Test_Data_name + '_hdr.h5', 'w')
-        img = output[0, :, :, :]
-        img = tv.utils.make_grid(img.data.cpu()).numpy()
+        img = output[0, :, :, :].cpu().numpy()
+        #img = tv.utils.make_grid(img.data.cpu()).numpy()
         hdrfile.create_dataset('data', data=img)
         hdrfile.close()
         
@@ -301,13 +328,7 @@ def testing_fun(model, test_loaders, outdir, args):
         target = torch.log(1 + 5000 * target).cpu() / torch.log(
             Variable(torch.from_numpy(np.array([1 + 5000])).float()))
 
-        #if(args.model == 'LIGHTFUSE'):
-        #    vgg_loss = VGGLoss('cpu')
-        #    test_loss = vgg_loss(hdr, target)
-        #else:
-        #    test_loss += F.mse_loss(hdr, target)
         test_loss += F.mse_loss(hdr, target)
-            
         num = num + 1
 
     test_loss = test_loss / len(test_loaders.dataset)
@@ -338,21 +359,37 @@ def validation(epoch, model, valid_loaders, trained_model_dir, args):
                 data1 = torch.cat((data[:, 0:1, :], data[:, 3:4, :]), dim=1)
                 data2 = torch.cat((data[:, 1:2, :], data[:, 4:5, :]), dim=1)
                 data3 = torch.cat((data[:, 2:3, :], data[:, 5:6, :]), dim=1)
-            elif args.format == 'rgb_dual':
-                data1 = data[:, 0:3, :, :] #short+long 6ch
-                data2 = data[:, 3:6, :, :]
-                data3 = data[:, 6:9, :, :]
             else:
-                data1 = torch.cat((data[:, 0:3, :], data[:, 9:12, :]), dim=1)
-                data2 = torch.cat((data[:, 3:6, :], data[:, 12:15, :]), dim=1)
-                data3 = torch.cat((data[:, 6:9, :], data[:, 15:18, :]), dim=1)
-            output = model(data1, data2, data3)
+                #data1 = torch.cat((data[:, 0:3, :], data[:, 9:12, :]), dim=1)
+                #data2 = torch.cat((data[:, 3:6, :], data[:, 12:15, :]), dim=1)
+                #data3 = torch.cat((data[:, 6:9, :], data[:, 15:18, :]), dim=1)
+                data1_r = torch.cat((data[:, 0:1, :], data[:,  9:10, :]), dim=1)
+                data2_r = torch.cat((data[:, 3:4, :], data[:, 12:13, :]), dim=1)
+                data3_r = torch.cat((data[:, 6:7, :], data[:, 15:16, :]), dim=1)
+
+                data1_g = torch.cat((data[:, 1:2, :], data[:, 10:11, :]), dim=1)
+                data2_g = torch.cat((data[:, 4:5, :], data[:, 13:14, :]), dim=1)
+                data3_g = torch.cat((data[:, 7:8, :], data[:, 16:17, :]), dim=1)
+
+                data1_b = torch.cat((data[:, 2:3, :], data[:, 11:12, :]), dim=1)
+                data2_b = torch.cat((data[:, 5:6, :], data[:, 14:15, :]), dim=1)
+                data3_b = torch.cat((data[:, 8:9, :], data[:, 17:18, :]), dim=1)
+            
+            #output = model(data1, data2, data3)
+            output_r = model(data1_r, data2_r, data3_r)
+            output_g = model(data1_g, data2_g, data3_g)
+            output_b = model(data1_b, data2_b, data3_b)
+
     
         #########  make the loss
-        output = torch.log(1 + 5000 * output.cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
-        target = torch.log(1 + 5000 * target.cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
+        output_rgb = torch.cat((output_r, output_g, output_b), dim=1)
+        target_rgb = torch.cat((target_r, target_g, target_b), dim=1)
+        
+        output = torch.log(1 + 5000 * output_rgb.cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
+        target = torch.log(1 + 5000 * target_rgb.cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
         
         loss = F.l1_loss(output, target)
+        #loss = loss_r + loss_g + loss_b
         valid_loss = valid_loss + loss
         
         #########  Prepare to calculate metrics
@@ -385,7 +422,7 @@ def validation(epoch, model, valid_loaders, trained_model_dir, args):
     return valid_loss, val_psnr, val_psnr_mu
 
 class testimage_dataloader(data.Dataset):
-    def __init__(self, list_dir, color='rgb'):
+    def __init__(self, list_dir, color):
         f = open(list_dir)
         self.list_txt = f.readlines()
         self.length = len(self.list_txt)
@@ -397,16 +434,11 @@ class testimage_dataloader(data.Dataset):
         
         if os.path.exists(sample_path):
             f = h5py.File(sample_path, 'r')
-            #data = self.crop_for_patch(f['IN'][:], self.patch_div) 
-            #label = self.crop_for_patch(f['GT'][:], self.patch_div)
             data = f['IN'][:]
             label = f['GT'][:]
             f.close()
         # print(sample_path)
         
-            if self.format == 'rgb_dual':
-                data, label = self.imageCrop(data, label, 1496)
-            
             if self.format == '444':
                 print(f"data.shape: {data.shape}, label.shape: {label.shape}")
                 data = torch.cat([rgb_to_mono(data[:, 3*i:3*(i+1), :, :]) for i in range(6)], dim=1)
@@ -417,19 +449,3 @@ class testimage_dataloader(data.Dataset):
 
     def random_number(self, num):
         return random.randint(1, num)
-    
-    def imageCrop(self, data, label, crop_size):
-        c, w, h = data.shape
-        w_boder = w - crop_size  # sample point y
-        h_boder = h - crop_size  # sample point x ...
-
-        if crop_size == 1496:
-            start_w = 0
-            start_h = 0
-        else:
-            start_w = self.random_number(w_boder - 1)
-            start_h = self.random_number(h_boder - 1)
-
-        crop_data = data[:, start_w:start_w + crop_size, start_h:start_h + crop_size]
-        crop_label = label[:, start_w:start_w + crop_size, start_h:start_h + crop_size]
-        return crop_data, crop_label

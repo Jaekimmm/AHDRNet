@@ -21,28 +21,38 @@ def mk_trained_dir_if_not(dir_path):
     if not os.path.exists(dir_path):
         os.makedirs(dir_path)
 
-
-
-def model_restore(model, trained_model_dir):
-    model_list = glob.glob((trained_model_dir + "/trained_*.pkl"))
-    a = []
-    for i in range(len(model_list)):
-        index = int(model_list[i].split('model')[-1].split('.')[0])
-        a.append(index)
-    epoch = np.sort(a)[-1]
-    model_path = trained_model_dir + 'trained_model{}.pkl'.format(epoch)
-    #model.load_state_dict(torch.load(model_path))
-    model.load_state_dict(torch.load(model_path, map_location='cpu'))
+def model_restore(model, trained_model_dir, rank):
+    if rank == 0:
+        model_list = glob.glob((trained_model_dir + "/trained_*.pkl"))
+        a = []
+        for i in range(len(model_list)):
+            index = int(model_list[i].split('model')[-1].split('.')[0])
+            a.append(index)
+        epoch = np.sort(a)[-1]
+        model_path = trained_model_dir + 'trained_model{}.pkl'.format(epoch)
+        #model.load_state_dict(torch.load(model_path))
+        print(f'[INFO] Load model from {model_path}')
+    else:
+        model_path = None
+        epoch = 0
+        
+    model_path = [model_path]
+    epoch = [epoch]
+    dist.broadcast_object_list(model_path, src=0)
+    dist.broadcast_object_list(epoch, src=0)
+    
+    if model_path[0] is not None:
+        model.load_state_dict(torch.load(model_path[0], map_location=f'cuda:{rank}'))
+    
     return model, epoch
 
 
 class data_loader(data.Dataset):
-    def __init__(self, list_dir, patch_div=1, crop_size=0, geometry_aug=False, color='rgb'):
+    def __init__(self, list_dir, patch_div=1, crop_size=0, geometry_aug=False):
         super().__init__()
         self.patch_div = patch_div
         self.crop_size = crop_size
         self.geometry_aug = geometry_aug
-        self.format = color
         
         with open(list_dir) as f:
             self.list_txt = f.readlines()
@@ -65,20 +75,10 @@ class data_loader(data.Dataset):
             #crop_size = 256
             if self.crop_size > 0 : data, label = self.imageCrop(data, label, self.crop_size)
             if self.geometry_aug : data, label = self.image_Geometry_Aug(data, label)
-            data = torch.from_numpy(data).float()
-            label = torch.from_numpy(label).float()
-            if self.format == '444':
-                #print(f"[INFO] RGB    : data {data.shape} , label {label.shape}")
-                data = torch.cat([rgb_to_yuv(data[3*i:3*(i+1), :, :]) for i in range(6)], dim=0)  # (batch, 6, 1, H, W)
-                label = rgb_to_yuv(label)
-                #print(f"[INFO] YUV444 : data {data.shape} , label {label.shape}")
-            else:
-                data = data
-                label = label
-                #print(f"[INFO] RGB    : data {data.shape} , label {label.shape}")
-                
+
+
         # print(sample_path)
-        return data, label
+        return torch.from_numpy(data).float(), torch.from_numpy(label).float()
 
     def __len__(self):
         return self.length
@@ -156,71 +156,50 @@ def get_lr(epoch, lr, max_epochs):
     #    lr = 0.1 * lr
     return lr
 
-def train(epoch, model, train_loaders, optimizer, trained_model_dir, args, mono=False):
+def train(epoch, model, train_loaders, optimizer, trained_model_dir, args, rank):
     lr = get_lr(epoch, args.lr, args.epochs)
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
-    print('[INFO] lr: {}'.format(optimizer.param_groups[0]['lr']))
+    if rank == 0: print('[INFO] lr: {}'.format(optimizer.param_groups[0]['lr']))
+    
     model.train()
     num = 0
     trainloss = 0
     avg_loss = 0
-    start = time.time()
+    
     for batch_idx, (data, target) in enumerate(train_loaders):
         if args.use_cuda:
-            data, target = data.cuda(), target.cuda()
-        end = time.time()
+            data, target = data.to(rank), target.to(rank)
 
 ############  used for End-to-End code
         if args.format == 'mono':
-            data1 = torch.cat((data[:, 0:1, :, :], data[:, 3:4, :, :]), dim=1)
-            data2 = torch.cat((data[:, 1:2, :, :], data[:, 4:5, :, :]), dim=1)
-            data3 = torch.cat((data[:, 2:3, :, :], data[:, 5:6, :, :]), dim=1)
-        elif args.format == 'rgb':
-            data1 = torch.cat((data[:, 0:3, :, :], data[:, 9:12, :, :]), dim=1)
-            data2 = torch.cat((data[:, 3:6, :, :], data[:, 12:15, :, :]), dim=1)
-            data3 = torch.cat((data[:, 6:9, :, :], data[:, 15:18, :, :]), dim=1)
-        elif args.format == 'rgb_dual':
-            data1 = data[:,  9:12, :, :]
-            data2 = data[:, 12:15, :, :]
-            data3 = data[:, 15:18, :, :]
+            data_mono = torch.cat([rgb_to_mono(data[:, 3*i:3*(i+1), :, :]) for i in range(6)], dim=1)  # (batch, 6, 1, H, W)
+            data1 = torch.cat((data_mono[:, 0:1, :, :], data_mono[:, 3:4, :, :]), dim=1)
+            data2 = torch.cat((data_mono[:, 1:2, :, :], data_mono[:, 4:5, :, :]), dim=1)
+            data3 = torch.cat((data_mono[:, 2:3, :, :], data_mono[:, 5:6, :, :]), dim=1)
         else:
             data1 = torch.cat((data[:, 0:3, :, :], data[:, 9:12, :, :]), dim=1)
             data2 = torch.cat((data[:, 3:6, :, :], data[:, 12:15, :, :]), dim=1)
             data3 = torch.cat((data[:, 6:9, :, :], data[:, 15:18, :, :]), dim=1)
+        
         optimizer.zero_grad()
         output = model(data1, data2, data3)
 
 #########  make the loss
-        if(args.model == 'LIGHTFUSE'):
-            vgg_loss = VGGLoss('cuda')
-            loss = vgg_loss(output, target)
-        else:
-            output = torch.log(1 + 5000 * output.cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
-            target = torch.log(1 + 5000 * target.cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
-            loss = F.l1_loss(output, target)
-        
+        output = torch.log(1 + 5000 * output.cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
+        target = torch.log(1 + 5000 * target.cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
+
+        loss = F.l1_loss(output, target)
         loss.backward()
         optimizer.step()
-        trainloss = trainloss + loss
-        avg_loss = avg_loss + loss
         
-        #if (batch_idx +1) % 4 == 0:
-        #    trainloss = trainloss / 4
-        if (batch_idx +1) % 1 == 0:
-            trainloss = trainloss / 1
-            print('train Epoch {} iteration: {} loss: {:.6f}'.format(epoch, batch_idx, trainloss.data))
-            fname = trained_model_dir + 'lossTXT.txt'
-            try:
-                fobj = open(fname, 'a')
-            except IOError:
-                print('open error')
-            else:
-                fobj.write('train Epoch {} iteration: {} Loss: {:.6f}\n'.format(epoch, batch_idx, trainloss.data))
-                fobj.close()
-            trainloss = 0
+        trainloss += loss.item()
+        avg_loss += loss.item()
+        
+        print(f'train (rank {rank}) Epoch {epoch} iteration: {batch_idx}, loss: {loss.item():.6f}')
 
     avg_loss /= len(train_loaders)
+    
     return avg_loss
 
 def testing_fun(model, test_loaders, outdir, args):
@@ -238,28 +217,14 @@ def testing_fun(model, test_loaders, outdir, args):
         with torch.no_grad():
             if args.format == 'mono':
                 data_mono = torch.cat([rgb_to_mono_gt(data[:, 3*i:3*(i+1), :]) for i in range(6)], dim=1)  # (batch, 6, 1, H, W)
-                target = rgb_to_mono_gt(target)
                 data1 = torch.cat((data_mono[:, 0:1, :], data_mono[:, 3:4, :]), dim=1)
                 data2 = torch.cat((data_mono[:, 1:2, :], data_mono[:, 4:5, :]), dim=1)
                 data3 = torch.cat((data_mono[:, 2:3, :], data_mono[:, 5:6, :]), dim=1)
-            elif args.format == 'rgb':
-                data1 = torch.cat((data[:, 0:3, :], data[:,  9:12, :]), dim=1)
+            else:
+                data1 = torch.cat((data[:, 0:3, :], data[:, 9:12, :]), dim=1)
                 data2 = torch.cat((data[:, 3:6, :], data[:, 12:15, :]), dim=1)
                 data3 = torch.cat((data[:, 6:9, :], data[:, 15:18, :]), dim=1)
-            elif args.format == 'rgb_dual':
-                data1 = data[:,  9:12, :, :] #short+long 6ch
-                data2 = data[:, 12:15, :, :]
-                data3 = data[:, 15:18, :, :]
-            else:
-                data_yuv = torch.cat([rgb_to_yuv_gt(data[:, 3*i:3*(i+1), :], args.format) for i in range(6)], dim=1)  # (batch, 6, 1, H, W)
-                target = rgb_to_yuv(target)
-                print(f"[INFO] Color conversion : RGB({data.shape}) --> mono({data_yuv.shape})")
-                data1 = torch.cat((data_yuv[:, 0:3, :], data_yuv[:,  9:12, :]), dim=1)
-                data2 = torch.cat((data_yuv[:, 3:6, :], data_yuv[:, 12:15, :]), dim=1)
-                data3 = torch.cat((data_yuv[:, 6:9, :], data_yuv[:, 15:18, :]), dim=1)
             output = model(data1, data2, data3)
-
-
 
         # save the result to .H5 files
         hdrfile = h5py.File(outdir + "/" + Test_Data_name + '_hdr.h5', 'w')
@@ -268,16 +233,12 @@ def testing_fun(model, test_loaders, outdir, args):
         hdrfile.create_dataset('data', data=img)
         hdrfile.close()
         
-        # save the result as tif w/o & w/ tonemapping (copy from freeSoul)
+        # save the result as tif w/ tonemapping (copy from freeSoul)
         gamma = 2.24 #degamma
         img = torch.squeeze(output)
         img = img.data.cpu().numpy().astype(np.float32)
         img = np.transpose(img, (2, 1, 0))
-        if args.format == 'mono':
-            img = img[:, :, [0, 0, 0]]
         img = img[:, :, [0, 1, 2]]
-        imageio.imwrite(outdir + "/" + Test_Data_name + '_wotm.tif', img, 'tif')
-        
         img = img ** gamma
         norm_perc = np.percentile(img, 99)
         img = tanh_norm_mu_tonemap(img, norm_perc)
@@ -301,13 +262,7 @@ def testing_fun(model, test_loaders, outdir, args):
         target = torch.log(1 + 5000 * target).cpu() / torch.log(
             Variable(torch.from_numpy(np.array([1 + 5000])).float()))
 
-        #if(args.model == 'LIGHTFUSE'):
-        #    vgg_loss = VGGLoss('cpu')
-        #    test_loss = vgg_loss(hdr, target)
-        #else:
-        #    test_loss += F.mse_loss(hdr, target)
         test_loss += F.mse_loss(hdr, target)
-            
         num = num + 1
 
     test_loss = test_loss / len(test_loaders.dataset)
@@ -317,7 +272,7 @@ def testing_fun(model, test_loaders, outdir, args):
 
     run_time = datetime.now().strftime('%m/%d %H:%M:%S')
     flog = open('./test_result.log', 'a')
-    flog.write(f'{args.model}, {args.run_name}, {args.epoch}, {run_time}, {test_loss:.6f}, {val_psnr:.6f}, {val_psnr_mu:.06f}\n')
+    flog.write(f'{args.model}, {args.run_name}, {arhs.epoch}, {run_time}, {test_loss:.6f}, {val_psnr:.6f}, {val_psnr_mu:.06f}\n')
     flog.close()
     return test_loss
 
@@ -335,13 +290,10 @@ def validation(epoch, model, valid_loaders, trained_model_dir, args):
         
         with torch.no_grad():
             if args.format == 'mono':
-                data1 = torch.cat((data[:, 0:1, :], data[:, 3:4, :]), dim=1)
-                data2 = torch.cat((data[:, 1:2, :], data[:, 4:5, :]), dim=1)
-                data3 = torch.cat((data[:, 2:3, :], data[:, 5:6, :]), dim=1)
-            elif args.format == 'rgb_dual':
-                data1 = data[:, 0:3, :, :] #short+long 6ch
-                data2 = data[:, 3:6, :, :]
-                data3 = data[:, 6:9, :, :]
+                data_mono = torch.cat([rgb_to_mono_gt(data[:, 3*i:3*(i+1), :]) for i in range(6)], dim=1)  # (batch, 6, 1, H, W)
+                data1 = torch.cat((data_mono[:, 0:1, :], data_mono[:, 3:4, :]), dim=1)
+                data2 = torch.cat((data_mono[:, 1:2, :], data_mono[:, 4:5, :]), dim=1)
+                data3 = torch.cat((data_mono[:, 2:3, :], data_mono[:, 5:6, :]), dim=1)
             else:
                 data1 = torch.cat((data[:, 0:3, :], data[:, 9:12, :]), dim=1)
                 data2 = torch.cat((data[:, 3:6, :], data[:, 12:15, :]), dim=1)
@@ -385,11 +337,10 @@ def validation(epoch, model, valid_loaders, trained_model_dir, args):
     return valid_loss, val_psnr, val_psnr_mu
 
 class testimage_dataloader(data.Dataset):
-    def __init__(self, list_dir, color='rgb'):
+    def __init__(self, list_dir):
         f = open(list_dir)
         self.list_txt = f.readlines()
         self.length = len(self.list_txt)
-        self.format = color
 
     def __getitem__(self, index):
         sample_path = self.list_txt[index]
@@ -397,19 +348,10 @@ class testimage_dataloader(data.Dataset):
         
         if os.path.exists(sample_path):
             f = h5py.File(sample_path, 'r')
-            #data = self.crop_for_patch(f['IN'][:], self.patch_div) 
-            #label = self.crop_for_patch(f['GT'][:], self.patch_div)
             data = f['IN'][:]
             label = f['GT'][:]
             f.close()
         # print(sample_path)
-        
-            if self.format == 'rgb_dual':
-                data, label = self.imageCrop(data, label, 1496)
-            
-            if self.format == '444':
-                print(f"data.shape: {data.shape}, label.shape: {label.shape}")
-                data = torch.cat([rgb_to_mono(data[:, 3*i:3*(i+1), :, :]) for i in range(6)], dim=1)
         return torch.from_numpy(data).float(), torch.from_numpy(label).float()
 
     def __len__(self):
@@ -417,19 +359,3 @@ class testimage_dataloader(data.Dataset):
 
     def random_number(self, num):
         return random.randint(1, num)
-    
-    def imageCrop(self, data, label, crop_size):
-        c, w, h = data.shape
-        w_boder = w - crop_size  # sample point y
-        h_boder = h - crop_size  # sample point x ...
-
-        if crop_size == 1496:
-            start_w = 0
-            start_h = 0
-        else:
-            start_w = self.random_number(w_boder - 1)
-            start_h = self.random_number(h_boder - 1)
-
-        crop_data = data[:, start_w:start_w + crop_size, start_h:start_h + crop_size]
-        crop_label = label[:, start_w:start_w + crop_size, start_h:start_h + crop_size]
-        return crop_data, crop_label

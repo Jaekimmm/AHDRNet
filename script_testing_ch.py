@@ -3,7 +3,7 @@ import argparse
 import torch.utils.data
 
 from model import *
-from running_func import *
+from running_func_ch import *
 from utils import *
 
 import os

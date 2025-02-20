@@ -2,8 +2,11 @@ import os
 import torch
 from torch.nn import init
 from torch import nn
+import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
+import torch.distributed as dist
+import torchvision.models as models
 
 def mk_dir(dir_path):
     if not os.path.exists(dir_path):
@@ -222,4 +225,123 @@ def save_plot(trained_model_dir):
     plt.grid(True)
 
     plt.savefig(f"{trained_model_dir}/curve_psnr.png", dpi=300, bbox_inches="tight")  # 고해상도 저장
+
+# Color conversion
+def rgb_to_yuv(tensor, mode="444"):
+    r, g, b = tensor[0, :, :], tensor[1, :, :], tensor[2, :, :]
+
+    # Compute Y channel
+    y = 0.299 * r + 0.587 * g + 0.114 * b
+    u = (b - y) / 2.032
+    v = (r - y) / 1.140
     
+    u = u.clamp(min=-1.0, max=1.0)
+    v = v.clamp(min=-1.0, max=1.0)
+    
+    if mode == "444":
+        # No downsampling, keep full resolution
+        yuv = torch.stack((y, u, v), dim=0)
+    
+    elif mode == "422":
+        # Downsample U, V horizontally (W -> W/2)
+        u = F.avg_pool2d(u.unsqueeze(1), kernel_size=(1, 2), stride=(1, 2)).squeeze(1)
+        v = F.avg_pool2d(v.unsqueeze(1), kernel_size=(1, 2), stride=(1, 2)).squeeze(1)
+        yuv = torch.stack((y, u, v), dim=1)
+    
+    elif mode == "420":
+        # Downsample U, V both horizontally and vertically (H -> H/2, W -> W/2)
+        u = F.avg_pool2d(u.unsqueeze(1), kernel_size=2, stride=2).squeeze(1)
+        v = F.avg_pool2d(v.unsqueeze(1), kernel_size=2, stride=2).squeeze(1)
+        yuv = torch.stack((y, u, v), dim=1)
+
+    return yuv
+
+def yuv_to_rgb(tensor, mode="444"):
+    y, u, v = tensor[:, 0, :, :], tensor[:, 1, :, :], tensor[:, 2, :, :]
+
+    r = y + 1.140 * v
+    g = y - 0.395 * u - 0.581 * v
+    b = y + 2.032 * u
+
+    rgb = torch.stack((r, g, b), dim=1)
+    rgb = torch.clamp(rgb, 0, 1)  # 0~1 범위로 클리핑
+
+    return rgb
+
+def yuv_to_rgb_torch_gt(tensor, mode="444"):
+    y, u, v = tensor[:, 0, :], tensor[:, 1, :], tensor[:, 2, :]
+
+    r = y + 1.140 * v
+    g = y - 0.395 * u - 0.581 * v
+    b = y + 2.032 * u
+
+    rgb = torch.stack((r, g, b), dim=1)
+    rgb = torch.clamp(rgb, 0, 1)  # 0~1 범위로 클리핑
+
+    return rgb
+
+def rgb_to_mono(tensor):
+    r, g, b = tensor[:, 0, :, :], tensor[:, 1, :, :], tensor[:, 2, :, :]
+    mono = 0.299 * r + 0.587 * g + 0.114 * b
+    return mono.unsqueeze(1)
+def rgb_to_mono_gt(tensor):
+    r, g, b = tensor[:, 0, :], tensor[:, 1, :], tensor[:, 2, :]
+    mono = 0.299 * r + 0.587 * g + 0.114 * b
+    return mono.unsqueeze(1)
+
+# VGG loss from LIGHTFUSE
+# << Orginal kera code >>
+# Patch_size = 256
+# Ch         = 3
+#
+# Select_layers = ['block1_conv1', 'block2_conv1', 'block3_conv1', 'block4_conv1', 'block5_conv1']
+# Vgg16 = VGG16(include_top=False, weights='imagenet', input_shape=(patch_size, patch_size, ch))
+# Vgg16.trainable = False
+# For l in vgg16.layers:
+#   l.trainable = False
+# Select = [vgg16.get_layer(name).output for name in select_layers]
+#
+# Model_vgg = Model(inputs=vgg16.input, outputs=select)
+class VGGFeatureExtractor(nn.Module):
+    def __init__(self, device='cuda'):
+        super(VGGFeatureExtractor, self).__init__()
+        
+        vgg16 = models.vgg16(pretrained=True).features.to(device).eval()
+        self.device = device
+        
+        self.selected_layers = [ 0,  1, # block1_conv1 + relu
+                                 5,  6, # block2_conv1 + relu
+                                10, 11, # block3_conv1 + relu
+                                17, 18, # block4_conv1 + relu
+                                24, 25] # block5_conv1 + relu
+        self.vgg_layers = nn.Sequential(*[vgg16[i] for i in self.selected_layers])
+        
+        for param in self.vgg_layers.parameters():
+            param.requires_grad = False
+            
+    def forward(self, x):
+        outputs = []
+        for i, layer in enumerate(self.vgg_layers):
+            x = layer(x)
+            if i in self.selected_layers:
+                outputs.append(x)
+        return outputs
+    
+class VGGLoss(nn.Module):
+    def __init__(self, device='cuda'):
+        super(VGGLoss, self).__init__()
+        self.vgg = VGGFeatureExtractor(device)
+        self.l1_loss = nn.L1Loss()
+        
+    def forward(self, y_true, y_pred):
+        out_pred = self.vgg(y_true)
+        out_true = self.vgg(y_pred)
+        
+        loss_f = 0
+        for f_g, f_l in zip(out_pred, out_true):
+            loss_f += self.l1_loss(f_g, f_l)
+            
+        loss_mse = F.mse_loss(y_pred, y_true)
+        
+        return loss_f + loss_mse
+

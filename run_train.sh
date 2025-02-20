@@ -1,6 +1,11 @@
-CUDA_VISIBLE_DEVICES=0,1,2,3 python script_training.py --model 'AHDR' --run_name 'mono_f64' --format 'mono' --nChannel 2 --nFeat 64 --epochs 1000
+#CUDA_VISIBLE_DEVICES=3,5,6,7 python script_training.py --model 'AHDR' --run_name 'yuv422' --format '422' --epochs 1000
+#CUDA_VISIBLE_DEVICES=3,5,6,7 python script_training.py --model 'AHDR' --run_name 'yuv444' --format '444' --epochs 250
+#CUDA_VISIBLE_DEVICES=0,1,2,3 python script_training_ddp.py --model 'AHDR' --run_name 'ddp_test' --format 'rgb' --epochs 1100
+#CUDA_VISIBLE_DEVICES=0,1,2,3 python script_training.py --model 'AHDR' --run_name 'mono_f64' --format 'mono' --nChannel 2 --nFeat 64 --epochs 1000
 #python script_training.py --model 'AHDR' --run_name 'mono_f16' --format 'mono' --nChannel 2 --nFeat 16 --epochs 1000
 #python script_training.py --model 'AHDR' --format 'rgb' --early_term
-#python script_training.py --model 'AHDR' --epochs 1000 --format 'rgb'
-#python script_training.py --model AHDR --format 'mono' --nChannel 2 --nFeat 64 --epochs 100 --early_term 0 \
-#python script_training.py --model SOL_2_6_2_2 --epochs 100 --early_term True
+#CUDA_VISIBLE_DEVICES=3,5,6,7 python script_training_ch.py --model 'AHDR' --run_name 'chRGB' --format 'rgb' --nChannel 2 --epochs 250
+#CUDA_VISIBLE_DEVICES=0,1,2,3 python script_training.py --model 'LIGHTFUSE' --run_name 'vgg_loss' --format 'rgb_dual' --nChannel 3 --nFeat 32 --epochs 1000 --lr 0.001
+#CUDA_VISIBLE_DEVICES=0,1,2,3 python script_training.py --model 'LIGHTFUSE' --run_name 'dual-vgg_loss' --format 'rgb_dual' --nChannel 6 --nFeat 32 --epochs 1000 --lr 0.001
+#CUDA_VISIBLE_DEVICES=4 python script_training.py --model 'LIGHTFUSE_mod_1' --format 'rgb_dual' --nChannel 6 --nFeat 32 --epochs 1000 --lr 0.001
+CUDA_VISIBLE_DEVICES=4 python script_training.py --model 'LIGHTFUSE_mod_2_1' --format 'rgb_dual' --nChannel 3 --nFeat 32 --epochs 1000 --lr 0.001
