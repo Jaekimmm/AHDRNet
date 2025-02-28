@@ -22,33 +22,35 @@ def mk_trained_dir_if_not(dir_path):
         os.makedirs(dir_path)
 
 
-
 def model_restore(model, trained_model_dir):
     model_list = glob.glob((trained_model_dir + "/trained_*.pkl"))
     a = []
     for i in range(len(model_list)):
         index = int(model_list[i].split('model')[-1].split('.')[0])
         a.append(index)
-    epoch = np.sort(a)[-1]
-    model_path = trained_model_dir + 'trained_model{}.pkl'.format(epoch)
-    #model.load_state_dict(torch.load(model_path))
-    model.load_state_dict(torch.load(model_path, map_location='cpu'))
-    return model, epoch
+    if len(a) == 0:
+        return model, 0
+    else:
+        epoch = np.sort(a)[-1]
+        model_path = trained_model_dir + 'trained_model{}.pkl'.format(epoch)
+        #model.load_state_dict(torch.load(model_path))
+        model.load_state_dict(torch.load(model_path, map_location='cpu'))
+        return model, epoch
 
 
 class data_loader(data.Dataset):
-    def __init__(self, list_dir, patch_div=1, crop_size=0, geometry_aug=False, color='rgb'):
+    def __init__(self, list_dir, patch_div=1, crop_size=0, geometry_aug=False, color='rgb', offset=False, label_tonemap=False):
         super().__init__()
         self.patch_div = patch_div
         self.crop_size = crop_size
         self.geometry_aug = geometry_aug
         self.format = color
+        self.offset = offset
+        self.label_tonemap = label_tonemap
         
-        with open(list_dir) as f:
-            self.list_txt = f.readlines()
-        f = open(list_dir)
-        self.list_txt = f.readlines()
+        self.list_txt = [os.path.join(list_dir, f) for f in os.listdir(list_dir) if f.endswith('.h5')]
         self.length = len(self.list_txt)
+        print(f"[INFO] {self.length} data loaded from {list_dir}")
 
     def __getitem__(self, index):
         sample_path = self.list_txt[index]
@@ -56,15 +58,27 @@ class data_loader(data.Dataset):
 
         if os.path.exists(sample_path):
 
-            f = h5py.File(sample_path, 'r')
-            #data = f['IN'][:]
-            #label = f['GT'][:]
-            data = self.crop_for_patch(f['IN'][:], self.patch_div)
-            label = self.crop_for_patch(f['GT'][:], self.patch_div)
-            f.close()
-            #crop_size = 256
+            if self.format == 'rgb_dual_sice':
+                with h5py.File(sample_path, 'r') as f:
+                    data  = self.crop_for_patch(f['IN'][0:6, :, :], self.patch_div)
+                    label = self.crop_for_patch(f['GT'][:], self.patch_div)
+            else:
+                with h5py.File(sample_path, 'r') as f:
+                    data  = self.crop_for_patch(f['IN'][0:18, :, :], self.patch_div)
+                    label = self.crop_for_patch(f['GT'][:], self.patch_div)
+            
+            if self.label_tonemap :
+                gamma = 2.24 #degamma
+                label = label ** gamma
+                norm_perc = np.percentile(label, 99)
+                label = tanh_norm_mu_tonemap(label, norm_perc)
+            
             if self.crop_size > 0 : data, label = self.imageCrop(data, label, self.crop_size)
             if self.geometry_aug : data, label = self.image_Geometry_Aug(data, label)
+            if self.offset :
+                data = data * 2.0 - 1.0
+                label = label * 2.0 - 1.0
+            
             data = torch.from_numpy(data).float()
             label = torch.from_numpy(label).float()
             if self.format == '444':
@@ -91,8 +105,14 @@ class data_loader(data.Dataset):
         w_boder = w - crop_size  # sample point y
         h_boder = h - crop_size  # sample point x ...
 
-        start_w = self.random_number(w_boder - 1)
-        start_h = self.random_number(h_boder - 1)
+        if w_boder > 0:
+            start_w = self.random_number(w_boder - 1)
+        else:
+            start_w = 0
+        if h_boder > 0:
+            start_h = self.random_number(h_boder - 1)
+        else:
+            start_h = 0
 
         crop_data = data[:, start_w:start_w + crop_size, start_h:start_h + crop_size]
         crop_label = label[:, start_w:start_w + crop_size, start_h:start_h + crop_size]
@@ -156,12 +176,13 @@ def get_lr(epoch, lr, max_epochs):
     #    lr = 0.1 * lr
     return lr
 
-def train(epoch, model, train_loaders, optimizer, trained_model_dir, args, mono=False):
+def train(epoch, model, loss_model, train_loaders, optimizer, trained_model_dir, args, mono=False):
     lr = get_lr(epoch, args.lr, args.epochs)
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
     print('[INFO] lr: {}'.format(optimizer.param_groups[0]['lr']))
     model.train()
+    loss_model.eval()
     num = 0
     trainloss = 0
     avg_loss = 0
@@ -180,10 +201,18 @@ def train(epoch, model, train_loaders, optimizer, trained_model_dir, args, mono=
             data1 = torch.cat((data[:, 0:3, :, :], data[:, 9:12, :, :]), dim=1)
             data2 = torch.cat((data[:, 3:6, :, :], data[:, 12:15, :, :]), dim=1)
             data3 = torch.cat((data[:, 6:9, :, :], data[:, 15:18, :, :]), dim=1)
-        elif args.format == 'rgb_dual':
+        elif args.format == 'rgb_org':
+            data1 = data[:, 0:3, :, :]
+            data2 = data[:, 3:6, :, :]
+            data3 = data[:, 6:9, :, :]
+        elif args.format == 'rgb_tm':
             data1 = data[:,  9:12, :, :]
-            data2 = data[:, 12:15, :, :]
-            data3 = data[:, 15:18, :, :]
+            data2 = data[:,  3: 6, :, :]
+            data3 = data[:,  6: 9, :, :]
+        elif args.format == 'rgb_dual_sice':
+            data1 = data[:, 0:3, :, :]      # short (under-exposed)
+            data2 = data[:, 0:3, :, :]      # no mid-exposure
+            data3 = data[:, 3:6, :, :]      # long (over-exposed)
         else:
             data1 = torch.cat((data[:, 0:3, :, :], data[:, 9:12, :, :]), dim=1)
             data2 = torch.cat((data[:, 3:6, :, :], data[:, 12:15, :, :]), dim=1)
@@ -192,9 +221,13 @@ def train(epoch, model, train_loaders, optimizer, trained_model_dir, args, mono=
         output = model(data1, data2, data3)
 
 #########  make the loss
-        if(args.model == 'LIGHTFUSE'):
-            vgg_loss = VGGLoss('cuda')
-            loss = vgg_loss(output, target)
+        if args.loss == 'vgg':
+            output_vgg = loss_model(output)
+            target_vgg = loss_model(target)
+            
+            loss_mse = F.mse_loss(output, target)
+            loss_vgg = F.l1_loss(output_vgg, target_vgg)
+            loss = loss_vgg + loss_mse
         else:
             output = torch.log(1 + 5000 * output.cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
             target = torch.log(1 + 5000 * target.cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
@@ -207,16 +240,16 @@ def train(epoch, model, train_loaders, optimizer, trained_model_dir, args, mono=
         
         #if (batch_idx +1) % 4 == 0:
         #    trainloss = trainloss / 4
-        if (batch_idx +1) % 1 == 0:
-            trainloss = trainloss / 1
+        if batch_idx % 10 == 0 and batch_idx != 0:
+            trainloss = trainloss / 10
             print('train Epoch {} iteration: {} loss: {:.6f}'.format(epoch, batch_idx, trainloss.data))
-            fname = trained_model_dir + 'lossTXT.txt'
+            fname = trained_model_dir + 'loss.txt'
             try:
                 fobj = open(fname, 'a')
             except IOError:
                 print('open error')
             else:
-                fobj.write('train Epoch {} iteration: {} Loss: {:.6f}\n'.format(epoch, batch_idx, trainloss.data))
+                fobj.write('{}, {}, {:.6f}\n'.format(epoch, batch_idx, trainloss.data))
                 fobj.close()
             trainloss = 0
 
@@ -246,10 +279,18 @@ def testing_fun(model, test_loaders, outdir, args):
                 data1 = torch.cat((data[:, 0:3, :], data[:,  9:12, :]), dim=1)
                 data2 = torch.cat((data[:, 3:6, :], data[:, 12:15, :]), dim=1)
                 data3 = torch.cat((data[:, 6:9, :], data[:, 15:18, :]), dim=1)
-            elif args.format == 'rgb_dual':
-                data1 = data[:,  9:12, :, :] #short+long 6ch
-                data2 = data[:, 12:15, :, :]
-                data3 = data[:, 15:18, :, :]
+            elif args.format == 'rgb_org':
+                data1 = data[:, 0:3, :, :]
+                data2 = data[:, 3:6, :, :]
+                data3 = data[:, 6:9, :, :]
+            elif args.format == 'rgb_tm':
+                data1 = data[:, 9:12, :, :]
+                data2 = data[:, 3:6, :, :]
+                data3 = data[:, 6:9, :, :]
+            elif args.format == 'rgb_dual_sice':
+                data1 = data[:, 0:3, :, :]      # short (under-exposed)
+                data2 = data[:, 0:3, :, :]      # no mid-exposure
+                data3 = data[:, 3:6, :, :]      # long (over-exposed)
             else:
                 data_yuv = torch.cat([rgb_to_yuv_gt(data[:, 3*i:3*(i+1), :], args.format) for i in range(6)], dim=1)  # (batch, 6, 1, H, W)
                 target = rgb_to_yuv(target)
@@ -258,9 +299,10 @@ def testing_fun(model, test_loaders, outdir, args):
                 data2 = torch.cat((data_yuv[:, 3:6, :], data_yuv[:, 12:15, :]), dim=1)
                 data3 = torch.cat((data_yuv[:, 6:9, :], data_yuv[:, 15:18, :]), dim=1)
             output = model(data1, data2, data3)
-
-
-
+            if args.offset:
+                output = (output + 1.0) / 2.0
+                target = (target + 1.0) / 2.0
+                
         # save the result to .H5 files
         hdrfile = h5py.File(outdir + "/" + Test_Data_name + '_hdr.h5', 'w')
         img = output[0, :, :, :]
@@ -268,20 +310,36 @@ def testing_fun(model, test_loaders, outdir, args):
         hdrfile.create_dataset('data', data=img)
         hdrfile.close()
         
-        # save the result as tif w/o & w/ tonemapping (copy from freeSoul)
-        gamma = 2.24 #degamma
-        img = torch.squeeze(output)
-        img = img.data.cpu().numpy().astype(np.float32)
+        # save input/output as jpg files
+        img = torch.squeeze(output*255.)
+        img = img.data.cpu().numpy().astype(np.uint8)
         img = np.transpose(img, (2, 1, 0))
-        if args.format == 'mono':
-            img = img[:, :, [0, 0, 0]]
         img = img[:, :, [0, 1, 2]]
-        imageio.imwrite(outdir + "/" + Test_Data_name + '_wotm.tif', img, 'tif')
+        imageio.imwrite(outdir + "/" + Test_Data_name + '_out.jpg', img)
         
-        img = img ** gamma
-        norm_perc = np.percentile(img, 99)
-        img = tanh_norm_mu_tonemap(img, norm_perc)
-        imageio.imwrite(outdir + "/" + Test_Data_name + '.tif', img, 'tif')
+        img = torch.squeeze(data1*255.)
+        img = img.data.cpu().numpy().astype(np.uint8)
+        img = np.transpose(img, (2, 1, 0))
+        img = img[:, :, [0, 1, 2]]
+        imageio.imwrite(outdir + "/" + Test_Data_name + '_data1.jpg', img)
+        
+        img = torch.squeeze(data2*255.)
+        img = img.data.cpu().numpy().astype(np.uint8)
+        img = np.transpose(img, (2, 1, 0))
+        img = img[:, :, [0, 1, 2]]
+        imageio.imwrite(outdir + "/" + Test_Data_name + '_data2.jpg', img)
+        
+        img = torch.squeeze(data3*255.)
+        img = img.data.cpu().numpy().astype(np.uint8)
+        img = np.transpose(img, (2, 1, 0))
+        img = img[:, :, [0, 1, 2]]
+        imageio.imwrite(outdir + "/" + Test_Data_name + '_data3.jpg', img)
+        
+        img = torch.squeeze(target*255.)
+        img = img.data.cpu().numpy().astype(np.uint8)
+        img = np.transpose(img, (2, 1, 0))
+        img = img[:, :, [0, 1, 2]]
+        imageio.imwrite(outdir + "/" + Test_Data_name + '_label.jpg', img)
         
         #########  Prepare to calculate metrics
         psnr_output = torch.squeeze(output[0].clone())
@@ -301,11 +359,6 @@ def testing_fun(model, test_loaders, outdir, args):
         target = torch.log(1 + 5000 * target).cpu() / torch.log(
             Variable(torch.from_numpy(np.array([1 + 5000])).float()))
 
-        #if(args.model == 'LIGHTFUSE'):
-        #    vgg_loss = VGGLoss('cpu')
-        #    test_loss = vgg_loss(hdr, target)
-        #else:
-        #    test_loss += F.mse_loss(hdr, target)
         test_loss += F.mse_loss(hdr, target)
             
         num = num + 1
@@ -338,19 +391,31 @@ def validation(epoch, model, valid_loaders, trained_model_dir, args):
                 data1 = torch.cat((data[:, 0:1, :], data[:, 3:4, :]), dim=1)
                 data2 = torch.cat((data[:, 1:2, :], data[:, 4:5, :]), dim=1)
                 data3 = torch.cat((data[:, 2:3, :], data[:, 5:6, :]), dim=1)
-            elif args.format == 'rgb_dual':
-                data1 = data[:, 0:3, :, :] #short+long 6ch
+            elif args.format == 'rgb_org':
+                data1 = data[:, 0:3, :, :]
                 data2 = data[:, 3:6, :, :]
                 data3 = data[:, 6:9, :, :]
+            elif args.format == 'rgb_tm':
+                data1 = data[:, 9:12, :, :]
+                data2 = data[:, 3:6, :, :]
+                data3 = data[:, 6:9, :, :]
+            elif args.format == 'rgb_dual_sice':
+                data1 = data[:, 0:3, :, :]      # short (under-exposed)
+                data2 = data[:, 0:3, :, :]      # no mid-exposure
+                data3 = data[:, 3:6, :, :]      # long (over-exposed)
             else:
                 data1 = torch.cat((data[:, 0:3, :], data[:, 9:12, :]), dim=1)
                 data2 = torch.cat((data[:, 3:6, :], data[:, 12:15, :]), dim=1)
                 data3 = torch.cat((data[:, 6:9, :], data[:, 15:18, :]), dim=1)
             output = model(data1, data2, data3)
+            if args.offset:
+                output = (output + 1.0) / 2.0
+                target = (target + 1.0) / 2.0
     
         #########  make the loss
-        output = torch.log(1 + 5000 * output.cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
-        target = torch.log(1 + 5000 * target.cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
+        if 'LIGHTFUSE' not in args.model:
+            output = torch.log(1 + 5000 * output.cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
+            target = torch.log(1 + 5000 * target.cpu()) / torch.log(Variable(torch.from_numpy(np.array([1+5000])).float()))
         
         loss = F.l1_loss(output, target)
         valid_loss = valid_loss + loss
@@ -385,27 +450,42 @@ def validation(epoch, model, valid_loaders, trained_model_dir, args):
     return valid_loss, val_psnr, val_psnr_mu
 
 class testimage_dataloader(data.Dataset):
-    def __init__(self, list_dir, color='rgb'):
-        f = open(list_dir)
-        self.list_txt = f.readlines()
+    def __init__(self, list_dir, patch_div=1, color='rgb', offset=False, label_tonemap=False):
+        #f = open(list_dir)
+        #self.list_txt = f.readlines()
+        self.list_txt = [os.path.join(list_dir, f) for f in os.listdir(list_dir) if f.endswith('.h5')]
         self.length = len(self.list_txt)
+        print(f"[INFO] {self.length} data loaded from {list_dir}")
+        print(self.list_txt)
+        
         self.format = color
+        self.patch_div = patch_div
+        self.offset = offset
+        self.label_tonemap = label_tonemap
 
     def __getitem__(self, index):
         sample_path = self.list_txt[index]
         sample_path = sample_path.strip()
         
         if os.path.exists(sample_path):
+            
             f = h5py.File(sample_path, 'r')
-            #data = self.crop_for_patch(f['IN'][:], self.patch_div) 
-            #label = self.crop_for_patch(f['GT'][:], self.patch_div)
-            data = f['IN'][:]
-            label = f['GT'][:]
+            data = self.crop_for_patch(f['IN'][:], self.patch_div) 
+            label = self.crop_for_patch(f['GT'][:], self.patch_div)
+            #data = f['IN'][:]
+            #label = f['GT'][:]
             f.close()
         # print(sample_path)
-        
-            if self.format == 'rgb_dual':
-                data, label = self.imageCrop(data, label, 1496)
+            
+            if self.label_tonemap :
+                gamma = 2.24 #degamma
+                label = label ** gamma
+                norm_perc = np.percentile(label, 99)
+                label = tanh_norm_mu_tonemap(label, norm_perc)
+            
+            if self.offset :
+                data = data * 2.0 - 1.0
+                label = label * 2.0 - 1.0
             
             if self.format == '444':
                 print(f"data.shape: {data.shape}, label.shape: {label.shape}")
@@ -433,3 +513,25 @@ class testimage_dataloader(data.Dataset):
         crop_data = data[:, start_w:start_w + crop_size, start_h:start_h + crop_size]
         crop_label = label[:, start_w:start_w + crop_size, start_h:start_h + crop_size]
         return crop_data, crop_label
+    
+    def crop_for_patch(self, image, patch_div=1):
+        # crop the image to be divisible by patch_div
+        if image.ndim == 2:  # 2D image (height x width)
+            height, width = image.shape
+            new_height = (height // patch_div) * patch_div
+            new_width = (width // patch_div) * patch_div
+            cropped_image = image[:new_height, :new_width]
+        elif image.ndim == 3:  # 3D image (channels x height x width)
+            channels, height, width = image.shape
+            new_height = (height // patch_div) * patch_div
+            new_width = (width // patch_div) * patch_div
+            cropped_image = image[:, :new_height, :new_width]
+        elif image.ndim == 4:  # 4D image (num x channels x height x width)
+            num, channels, height, width = image.shape
+            new_height = (height // patch_div) * patch_div
+            new_width = (width // patch_div) * patch_div
+            cropped_image = image[:, :, :new_height, :new_width]
+        else:
+            raise ValueError("Unsupported image shape")
+    
+        return cropped_image

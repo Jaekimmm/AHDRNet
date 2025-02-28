@@ -303,45 +303,54 @@ def rgb_to_mono_gt(tensor):
 #
 # Model_vgg = Model(inputs=vgg16.input, outputs=select)
 class VGGFeatureExtractor(nn.Module):
-    def __init__(self, device='cuda'):
+    def __init__(self):
         super(VGGFeatureExtractor, self).__init__()
         
-        vgg16 = models.vgg16(pretrained=True).features.to(device).eval()
-        self.device = device
-        
-        self.selected_layers = [ 0,  1, # block1_conv1 + relu
-                                 5,  6, # block2_conv1 + relu
-                                10, 11, # block3_conv1 + relu
-                                17, 18, # block4_conv1 + relu
-                                24, 25] # block5_conv1 + relu
-        self.vgg_layers = nn.Sequential(*[vgg16[i] for i in self.selected_layers])
-        
-        for param in self.vgg_layers.parameters():
+        vgg = models.vgg16(weights='DEFAULT').features.eval()
+        self.layers = nn.ModuleList(vgg[:25+1])
+        for param in self.layers.parameters():
             param.requires_grad = False
             
     def forward(self, x):
-        outputs = []
-        for i, layer in enumerate(self.vgg_layers):
+        for i, layer in enumerate(self.layers):
             x = layer(x)
-            if i in self.selected_layers:
-                outputs.append(x)
-        return outputs
+        
+        return x
     
-class VGGLoss(nn.Module):
-    def __init__(self, device='cuda'):
-        super(VGGLoss, self).__init__()
-        self.vgg = VGGFeatureExtractor(device)
-        self.l1_loss = nn.L1Loss()
-        
-    def forward(self, y_true, y_pred):
-        out_pred = self.vgg(y_true)
-        out_true = self.vgg(y_pred)
-        
-        loss_f = 0
-        for f_g, f_l in zip(out_pred, out_true):
-            loss_f += self.l1_loss(f_g, f_l)
-            
-        loss_mse = F.mse_loss(y_pred, y_true)
-        
-        return loss_f + loss_mse
+def get_activation(layer):
+    """ Layer에서 Activation 함수 찾기 """
+    if isinstance(layer, nn.ReLU):
+        return "ReLU"
+    elif isinstance(layer, nn.Sigmoid):
+        return "Sigmoid"
+    elif isinstance(layer, nn.Tanh):
+        return "Tanh"
+    return "None"
 
+def print_model_info(model, input_size=(1, 3, 256, 256)):
+    """ PyTorch 모델의 모든 Layer 정보를 출력 (ModuleList 지원) """
+    
+    print("--------------------------------------------------------------------------------")
+    print(f"{'Layer Type':<30}{'Output Shape':<30}{'Activation':<20}")
+    print("="*80)
+
+    # 가상의 입력을 생성하여 Forward 수행
+    x = torch.randn(*input_size).to(next(model.parameters()).device)
+
+    for name, layer in model.named_children():
+        # ✅ ModuleList인 경우 개별 Layer 순회
+        if isinstance(layer, nn.ModuleList):
+            for sub_idx, sub_layer in enumerate(layer):
+                x = sub_layer(x)  # ✅ 개별 Layer 실행
+                activation = get_activation(sub_layer)
+                print(f"{f'{name}[{sub_idx}] ({sub_layer.__class__.__name__})':<30}"
+                      f"{str(tuple(x.shape)):<30}"
+                      f"{activation:<20}")
+        else:
+            x = layer(x)  # ✅ 일반 Layer 실행
+            activation = get_activation(layer)
+            print(f"{f'{name} ({layer.__class__.__name__})':<30}"
+                  f"{str(tuple(x.shape)):<30}"
+                  f"{activation:<20}")
+
+    print("="*80)

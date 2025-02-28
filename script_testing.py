@@ -13,8 +13,10 @@ parser = argparse.ArgumentParser(description='Attention-guided HDR')
 parser.add_argument('--model', type=str, default='AHDR')
 parser.add_argument('--run_name', type=str, default='')
 parser.add_argument('--format', type=str, default='rgb')
+parser.add_argument('--offset', action='store_true', default=False)
+parser.add_argument('--label_tonemap', action='store_true', default=False)
 parser.add_argument('--epoch', type=int, default=0)
-parser.add_argument('--test_whole_Image', default='./data_test.txt')
+parser.add_argument('--test_whole_Image', default='./dataset_test')
 parser.add_argument('--use_cuda', default=True)
 parser.add_argument('--load_model', default=True)
 parser.add_argument('--lr', default=0.0001)
@@ -41,11 +43,8 @@ else:
     
 #load data
 testimage_dataset = torch.utils.data.DataLoader(
-    testimage_dataloader(args.test_whole_Image, color=args.format),
+    testimage_dataloader(args.test_whole_Image, patch_div=8, color=args.format, offset=args.offset, label_tonemap=args.label_tonemap),
     batch_size=1)
-valid_loaders = torch.utils.data.DataLoader(
-    data_loader(args.test_whole_Image, color=args.format),
-    batch_size=1, shuffle=True)
 
 #make folders of trained model and result
 if args.run_name:
@@ -72,15 +71,17 @@ def weights_init_kaiming(m):
         init.constant(m.bias.data, 0.0)
 
 ##
-if args.model in globals():
-    model = globals()[args.model]
-print(f"\nRun test with model {model}\n")
-    
-#model = model(args)
-model = nn.DataParallel(model(args))
+if args.model in globals(): model = globals()[args.model]
+model = model(args)
 model.apply(weights_init_kaiming)
+ 
+#model = model(args)
 if args.use_cuda:
     model.cuda()
+    model = nn.DataParallel(model)
+
+print(f"\nRun test with model {model}\n")
+print(model)
 
 ##
 start_step = 0

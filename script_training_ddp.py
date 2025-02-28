@@ -20,14 +20,16 @@ parser = argparse.ArgumentParser(description='Attention-guided HDR')
 parser.add_argument('--model', type=str, default='AHDR')
 parser.add_argument('--run_name', type=str, default='')
 parser.add_argument('--format', type=str, default='rgb')
+parser.add_argument('--loss', type=str, default='L1')
 parser.add_argument('--early_term', action='store_true', default=False)
+parser.add_argument('--offset', action='store_true', default=False)
 parser.add_argument('--train_data', default='./data_train.txt')
 parser.add_argument('--valid_data', default='./data_valid.txt')
 parser.add_argument('--test_whole_Image', default='./data_test.txt')
 parser.add_argument('--use_cuda', default=True)
 parser.add_argument('--restore', default=True)
 parser.add_argument('--load_model', default=True)
-parser.add_argument('--lr', default=0.0001)
+parser.add_argument('--lr', type=float, default=0.0001)
 parser.add_argument('--seed', default=1)
 parser.add_argument('--batchsize', default=8)
 parser.add_argument('--epochs', type=int, default=800000)
@@ -139,9 +141,10 @@ if __name__ == '__main__':
     trained_model_filename = f"{args.model}_model.pt"
     mk_dir(trained_model_dir)
     
-    train_dataset = data_loader(args.train_data, patch_div=1, crop_size=256, geometry_aug=True)
+    train_dataset = data_loader(args.train_data, geometry_aug=True, color=args.format, offset=args.offset)
+    
     print(f"[INFO] Train dataset loaded: {len(train_dataset)} images")
-    valid_dataset = data_loader(args.valid_data)
+    valid_dataset = data_loader(args.valid_data, color=args.format, offset=args.offset)
     
     start_train = time.time()
     

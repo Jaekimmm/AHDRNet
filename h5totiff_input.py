@@ -65,4 +65,7 @@ def h5_to_tif_batch(directory):
 
 
 # ✅ 실행 예시
-h5_to_tif_batch("./GenerH5Data/Result/Test")
+#h5_to_tif_batch("./GenerH5Data/Result/Test")
+h5_path = "./dataset_sice/test/13.h5"
+tif_path = os.path.splitext(h5_path)[0]
+h5_to_tif(h5_path, tif_path)
